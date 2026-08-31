@@ -13,6 +13,8 @@ import * as bedrock from 'aws-cdk-lib/aws-bedrock';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { Construct } from 'constructs';
 
+import { KitApi } from './kit-api';
+
 /**
  * Harness deployment config: role-scoped fields (for IAM role + container build)
  * plus the full validated spec + its config directory so the L3 construct can
@@ -302,13 +304,19 @@ export class AgentCoreStack extends Stack {
           { type: 'HATE', inputStrength: 'HIGH', outputStrength: 'HIGH' },
           { type: 'INSULTS', inputStrength: 'MEDIUM', outputStrength: 'MEDIUM' },
           { type: 'MISCONDUCT', inputStrength: 'MEDIUM', outputStrength: 'MEDIUM' },
-          { type: 'PROMPT_ATTACK', inputStrength: 'HIGH', outputStrength: 'NONE' },
+          // MEDIUM, not HIGH: at HIGH, benign meta-questions about the
+          // conversation ("what was my previous question, verbatim?") are
+          // misclassified as prompt-extraction attacks.
+          { type: 'PROMPT_ATTACK', inputStrength: 'MEDIUM', outputStrength: 'NONE' },
         ],
       },
     });
+    // CfnGuardrailVersion is immutable: editing the guardrail only updates its
+    // DRAFT. Bump this description whenever the filters change — the
+    // replacement snapshots the draft into a new numbered version.
     const guardrailVersion = new bedrock.CfnGuardrailVersion(this, 'KitGuardrailVersion', {
       guardrailIdentifier: guardrail.attrGuardrailId,
-      description: 'Kit default guardrail version',
+      description: 'Kit guardrail: content filters HIGH/MEDIUM, prompt-attack MEDIUM',
     });
     for (const env of this.application.environments.values()) {
       env.runtime.addEnvironmentVariable('KIT_GUARDRAIL_ID', guardrail.attrGuardrailId);
@@ -321,6 +329,12 @@ export class AgentCoreStack extends Stack {
       );
     }
     new CfnOutput(this, 'KitGuardrailIdOutput', { value: guardrail.attrGuardrailId });
+
+    // ── Kit: programmatic access (API Gateway + Lambda, API-key auth).
+    const kitRuntime = this.application.environments.get('kit');
+    if (kitRuntime) {
+      new KitApi(this, 'KitApi', { runtimeArn: kitRuntime.runtime.runtimeArn });
+    }
 
     // Stack-level output
     new CfnOutput(this, 'StackNameOutput', {
