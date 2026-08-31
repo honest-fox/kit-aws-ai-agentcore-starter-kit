@@ -15,7 +15,11 @@
       "codeLocation": "app/kit/",
       "runtimeVersion": "PYTHON_3_14",
       "networkMode": "PUBLIC",
-      "protocol": "HTTP"
+      "protocol": "HTTP",
+      "connections": [
+        { "to": { "type": "codeInterpreter" }, "description": "AWS managed code interpreter sandbox" },
+        { "to": { "type": "browser" }, "description": "AWS managed browser for web access" }
+      ]
     }
   ],
   "memories": [

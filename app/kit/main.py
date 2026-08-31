@@ -4,6 +4,11 @@ from strands import Agent, tool
 import asyncio
 from strands.agent.conversation_manager.null_conversation_manager import NullConversationManager
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
+import os
+
+from strands_tools.browser import AgentCoreBrowser
+from strands_tools.code_interpreter import AgentCoreCodeInterpreter
+
 from model.load import load_model
 from memory.session import get_session_manager
 
@@ -37,6 +42,13 @@ def add_numbers(a: int, b: int) -> int:
     """Return the sum of two numbers"""
     return a+b
 tools.append(add_numbers)
+
+# AgentCore managed tools: code interpreter and browser run in isolated
+# AWS-managed sandboxes, not in this container. The runtime role is granted
+# access via the connections in agentcore/agentcore.json.
+_REGION = os.environ.get("AWS_REGION", "ap-southeast-2")
+tools.append(AgentCoreCodeInterpreter(region=_REGION).code_interpreter)
+tools.append(AgentCoreBrowser(region=_REGION).browser)
 
 
 
