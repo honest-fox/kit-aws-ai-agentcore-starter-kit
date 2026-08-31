@@ -1,0 +1,8 @@
+[
+  {
+    "name": "default",
+    "description": "Your AWS account and region for Kit deployment",
+    "account": "123456789012",
+    "region": "ap-southeast-2"
+  }
+]

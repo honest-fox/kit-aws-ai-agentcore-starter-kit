@@ -1,0 +1,17 @@
+# Secrets (local environment files are never committed)
+.env.local
+
+# CDK Build Artifacts
+cdk/cdk.out/
+cdk/node_modules/
+
+# CLI Internals
+.cli/*
+
+# Ephemeral Staging
+.cache/*
+
+# Kit: repo is public at launch — never commit deploy state or real
+# account targets (the CLI default is to track deployed-state.json;
+# we opt out). Copy aws-targets.example.json to aws-targets.json locally.
+aws-targets.json
