@@ -9,6 +9,7 @@ import {
   type HarnessDeploymentConfig,
 } from '@aws/agentcore-cdk';
 import { CfnOutput, Stack, type StackProps } from 'aws-cdk-lib';
+import * as bedrock from 'aws-cdk-lib/aws-bedrock';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { Construct } from 'constructs';
 
@@ -281,6 +282,45 @@ export class AgentCoreStack extends Stack {
         });
       }
     }
+
+    // ── Kit: Bedrock Guardrails (not part of the agentcore.json schema, so
+    // defined here alongside the L3 construct; the runtime discovers it via
+    // env vars, mirroring how memories are wired). Sensible defaults on:
+    // content filters plus prompt-attack detection. PROMPT_ATTACK output
+    // strength must be NONE per the Bedrock API contract.
+    const guardrail = new bedrock.CfnGuardrail(this, 'KitGuardrail', {
+      name: `${spec.name}-guardrail`,
+      description: 'Kit default guardrail: content filters and prompt-attack detection',
+      blockedInputMessaging:
+        'Sorry, I can’t help with that request. If you think this was blocked in error, the guardrail configuration is adjustable — see the Kit documentation.',
+      blockedOutputsMessaging:
+        'Sorry, I can’t provide that response. If you think this was blocked in error, the guardrail configuration is adjustable — see the Kit documentation.',
+      contentPolicyConfig: {
+        filtersConfig: [
+          { type: 'SEXUAL', inputStrength: 'HIGH', outputStrength: 'HIGH' },
+          { type: 'VIOLENCE', inputStrength: 'HIGH', outputStrength: 'HIGH' },
+          { type: 'HATE', inputStrength: 'HIGH', outputStrength: 'HIGH' },
+          { type: 'INSULTS', inputStrength: 'MEDIUM', outputStrength: 'MEDIUM' },
+          { type: 'MISCONDUCT', inputStrength: 'MEDIUM', outputStrength: 'MEDIUM' },
+          { type: 'PROMPT_ATTACK', inputStrength: 'HIGH', outputStrength: 'NONE' },
+        ],
+      },
+    });
+    const guardrailVersion = new bedrock.CfnGuardrailVersion(this, 'KitGuardrailVersion', {
+      guardrailIdentifier: guardrail.attrGuardrailId,
+      description: 'Kit default guardrail version',
+    });
+    for (const env of this.application.environments.values()) {
+      env.runtime.addEnvironmentVariable('KIT_GUARDRAIL_ID', guardrail.attrGuardrailId);
+      env.runtime.addEnvironmentVariable('KIT_GUARDRAIL_VERSION', guardrailVersion.attrVersion);
+      env.runtime.role.addToPrincipalPolicy(
+        new iam.PolicyStatement({
+          actions: ['bedrock:ApplyGuardrail'],
+          resources: [guardrail.attrGuardrailArn],
+        })
+      );
+    }
+    new CfnOutput(this, 'KitGuardrailIdOutput', { value: guardrail.attrGuardrailId });
 
     // Stack-level output
     new CfnOutput(this, 'StackNameOutput', {
