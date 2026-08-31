@@ -5,6 +5,7 @@ import asyncio
 from strands.agent.conversation_manager.null_conversation_manager import NullConversationManager
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from model.load import load_model
+from memory.session import get_session_manager
 
 app = BedrockAgentCoreApp()
 log = app.logger
@@ -18,6 +19,10 @@ DEFAULT_SYSTEM_PROMPT = """
 You are Kit, a working AI agent deployed from Kit — the free, open-source
 AI agent starter kit by Honest Fox, running on Amazon Bedrock AgentCore.
 Be helpful, direct, and concise. Use tools when appropriate.
+
+You have persistent memory: conversations are stored durably, and facts and
+preferences the user shares are remembered across sessions. If relevant
+remembered context appears below, use it naturally.
 """
 
 
@@ -44,30 +49,50 @@ for mcp_client in mcp_clients:
 def _make_conversation_manager():
     return NullConversationManager()
 
-# Reuses one Agent per session_id so each session keeps its own in-process
-# conversation history (best-effort; resets on cold start). The cache is bounded
-# to 128 sessions with LRU eviction (least-recently-used is dropped and its
-# history reset) so a single process serving many sessions cannot leak history
-# between them or grow without limit. For durable history, attach a session manager.
+# Reuses one Agent per (session_id, actor_id). With AgentCore Memory configured
+# (the default deployment), each agent gets a session manager that persists every
+# turn durably and restores history on cold starts, plus long-term fact/preference
+# retrieval. Without memory, history is in-process best-effort. The cache is
+# bounded to 128 sessions with LRU eviction so a single process serving many
+# sessions cannot leak history between them or grow without limit.
 def agent_factory():
     cache = OrderedDict()
-    def get_or_create_agent(session_id):
-        if session_id in cache:
-            cache.move_to_end(session_id)
-            return cache[session_id]
+    def get_or_create_agent(session_id, actor_id):
+        key = (session_id, actor_id)
+        if key in cache:
+            cache.move_to_end(key)
+            return cache[key]
         if len(cache) >= 128:
             cache.popitem(last=False)
-        cache[session_id] = Agent(
+        session_manager = get_session_manager(session_id, actor_id)
+        agent_kwargs = dict(
             model=load_model(),
             system_prompt=DEFAULT_SYSTEM_PROMPT,
             tools=tools,
-            conversation_manager=_make_conversation_manager(),
             hooks=[
             ],
         )
-        return cache[session_id]
+        if session_manager is not None:
+            agent_kwargs["session_manager"] = session_manager
+        else:
+            agent_kwargs["conversation_manager"] = _make_conversation_manager()
+        cache[key] = Agent(**agent_kwargs)
+        return cache[key]
     return get_or_create_agent
 get_or_create_agent = agent_factory()
+
+
+def _extract_actor_id(payload, context) -> str:
+    """Actor (user) identity for memory namespacing: payload field, then the
+    AgentCore custom user-id header, then a shared default."""
+    actor_id = payload.get("actor_id") if isinstance(payload, dict) else None
+    if isinstance(actor_id, str) and actor_id:
+        return actor_id
+    headers = getattr(context, "request_headers", None) or {}
+    for header_key, value in headers.items():
+        if header_key.lower() == "x-amzn-bedrock-agentcore-runtime-user-id" and value:
+            return value
+    return "default-user"
 
 
 def strip_trailing_tool_use(messages: Any) -> list[dict]:
@@ -144,11 +169,10 @@ def _is_inline_function_call(event: dict) -> bool:
 
 @app.entrypoint
 async def invoke(payload, context):
-    log.info("Invoking Agent.....")
-
-
-    session_id = getattr(context, 'session_id', 'default-session')
-    agent = get_or_create_agent(session_id)
+    session_id = getattr(context, 'session_id', None) or 'default-session'
+    actor_id = _extract_actor_id(payload, context)
+    log.info("Invoking agent: session=%s actor=%s", session_id, actor_id)
+    agent = get_or_create_agent(session_id, actor_id)
 
     prompt = _extract_prompt(payload)
 
