@@ -14,6 +14,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import { Construct } from 'constructs';
 
 import { KitApi } from './kit-api';
+import { KitKnowledgeBase } from './kit-knowledge-base';
 
 /**
  * Harness deployment config: role-scoped fields (for IAM role + container build)
@@ -334,6 +335,18 @@ export class AgentCoreStack extends Stack {
     const kitRuntime = this.application.environments.get('kit');
     if (kitRuntime) {
       new KitApi(this, 'KitApi', { runtimeArn: kitRuntime.runtime.runtimeArn });
+    }
+
+    // ── Kit: working knowledge base with sample corpus (S3 Vectors backed).
+    const knowledgeBase = new KitKnowledgeBase(this, 'KitKb');
+    if (kitRuntime) {
+      kitRuntime.runtime.addEnvironmentVariable('KNOWLEDGE_BASE_ID', knowledgeBase.knowledgeBaseId);
+      kitRuntime.runtime.role.addToPrincipalPolicy(
+        new iam.PolicyStatement({
+          actions: ['bedrock:Retrieve'],
+          resources: [knowledgeBase.knowledgeBaseArn],
+        })
+      );
     }
 
     // Stack-level output

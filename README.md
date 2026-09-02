@@ -1,108 +1,116 @@
-# AgentCore Project
+# Kit — AI Agent Starter Kit by Honest Fox
 
-This project was created with the [AgentCore CLI](https://github.com/aws/agentcore-cli).
+**Deploy a genuinely working AI agent into your own AWS account in minutes.**
+Not a chat demo: a production-shaped agent on Amazon Bedrock AgentCore with
+durable memory, working RAG, guardrails, managed tools, and an authenticated
+API — free, open source, and built Sydney-first.
 
-## Project Structure
+Kit (a kit is a baby fox 🦊) is how [Honest Fox](https://honestfox.com.au)
+shows rather than tells. Deploy it, poke it, read the code, keep it forever.
 
-```
-my-project/
-├── AGENTS.md               # AI coding assistant context
-├── agentcore/
-│   ├── agentcore.json      # Project config (agents, memories, credentials, gateways, evaluators)
-│   ├── aws-targets.json    # Deployment targets (account + region)
-│   ├── .env.local          # Secrets — API keys (gitignored)
-│   ├── .llm-context/       # TypeScript type definitions for AI assistants
-│   │   ├── agentcore.ts    # AgentCoreProjectSpec types
-│   │   └── aws-targets.ts  # Deployment target types
-│   └── cdk/                # CDK infrastructure (@aws/agentcore-cdk)
-├── app/                    # Agent application code
-└── evaluators/             # Custom evaluator code (if any)
-```
+## What you get
 
-## Getting Started
+One CloudFormation stack, deployed with one command:
 
-### Prerequisites
+- **Agent runtime** on Amazon Bedrock AgentCore, built with the
+  [Strands](https://strandsagents.com) framework
+- **Claude Sonnet on Bedrock** via the `au.` inference profile —
+  **inference stays in Australia** by default (swap models or regions with
+  one environment variable, no rebuild)
+- **Durable memory** — conversations survive restarts, and the agent
+  remembers facts and preferences across sessions (AgentCore Memory,
+  semantic + preference + summary strategies)
+- **Working RAG out of the box** — a Bedrock Knowledge Base backed by S3
+  Vectors, pre-loaded with a sample corpus so retrieval works on your very
+  first question. Swap in your own documents by replacing one folder.
+- **Managed tools** — code interpreter and web browser running in isolated
+  AWS sandboxes, not in your agent's container
+- **Guardrails on by default** — content filters and prompt-attack
+  detection, tuned so benign questions pass
+- **Authenticated API** — API Gateway + Lambda with API-key auth and
+  throttling; no open endpoints, ever
+- **No third-party calls** — nothing leaves AWS unless you opt in
 
-- **Node.js** 20.x or later
-- **Python 3.10+** and **uv** for Python agents ([install uv](https://docs.astral.sh/uv/getting-started/installation/))
-- **AWS credentials** configured (`aws configure` or environment variables)
-- **Docker** (only for Container build agents)
+## Quick start
 
-### Development
-
-Run your agent locally:
-
-```bash
-agentcore dev
-```
-
-### Validate Invocation Input
-
-Validate runtime invocation payloads before forwarding them to an agent framework. Keep user prompts typed as strings
-and pass only prompt text to the agent.
-
-### Deployment
-
-Deploy to AWS:
+Prerequisites: an AWS account, Node.js 20+, Python 3.10+ with
+[uv](https://docs.astral.sh/uv/), Docker, and AWS credentials configured.
 
 ```bash
+npm install -g @aws/agentcore
+git clone https://github.com/honestfox/kit && cd kit
+cp agentcore/aws-targets.example.json agentcore/aws-targets.json
+# edit aws-targets.json: your account id and region
 agentcore deploy
 ```
 
-## Commands
+Then talk to your agent:
 
-| Command | Description |
-| --- | --- |
-| `agentcore create` | Create a new AgentCore project |
-| `agentcore add` | Add resources (agent, memory, credential, gateway, evaluator, policy) |
-| `agentcore remove` | Remove resources |
-| `agentcore dev` | Run agent locally with hot-reload |
-| `agentcore deploy` | Deploy to AWS via CDK |
-| `agentcore status` | Show deployment status |
-| `agentcore invoke` | Invoke agent (local or deployed) |
-| `agentcore logs` | View agent logs |
-| `agentcore traces` | View agent traces |
-| `agentcore eval` | Run evaluations |
-| `agentcore package` | Package agent artifacts |
-| `agentcore validate` | Validate configuration |
-| `agentcore pause` | Pause a deployed agent |
-| `agentcore resume` | Resume a paused agent |
-| `agentcore fetch` | Fetch remote resource definitions |
-| `agentcore import` | Import existing resources |
-| `agentcore update` | Check for CLI updates |
+```bash
+agentcore invoke "G'day! What can you do?"
+```
 
-## Configuration
+### Prove the RAG works
 
-Edit the JSON files in `agentcore/` to configure your project. See `agentcore/.llm-context/` for type definitions and validation constraints.
+The knowledge base ships with documents about a fictional Sydney coffee
+roaster. These answers exist nowhere else:
 
-The project uses a **flat resource model** — agents, memories, credentials, gateways, evaluators, and policies are top-level arrays in `agentcore.json`. Resources are independent; agents discover memories and credentials at runtime via environment variables or SDK calls.
+```bash
+agentcore invoke "How much is a 250g bag of Marrickville Morning?"
+agentcore invoke "What's Kookaburra Coffee's return policy on equipment?"
+```
 
-## Resources
+### Call the API
 
-| Resource | Purpose |
-| --- | --- |
-| Agent (runtime) | HTTP, MCP, or A2A agent deployed to AgentCore Runtime |
-| Memory | Persistent context storage with configurable strategies |
-| Credential | API key or OAuth credential providers |
-| Gateway | MCP gateway that routes tool calls to targets |
-| Gateway Target | Tool implementation (Lambda, MCP server, OpenAPI, Smithy, API Gateway) |
-| Evaluator | Custom LLM-as-a-Judge or code-based evaluation |
-| Online Eval Config | Continuous evaluation pipeline for deployed agents |
-| Policy | Cedar authorization policies for gateway tools |
+The stack outputs your endpoint URL and API key id:
 
-### Agent Types
+```bash
+KEY=$(aws apigateway get-api-key --api-key <key-id> --include-value --query value --output text)
+curl -X POST <api-url> \
+  -H "x-api-key: $KEY" -H "Content-Type: application/json" \
+  -d '{"prompt": "Remember that my name is Dana.", "actor_id": "dana"}'
+```
 
-- **Template agents**: Created from framework templates (Strands, LangChain/LangGraph, GoogleADK, OpenAI Agents, Autogen)
-- **BYO agents**: Bring your own code with `agentcore add agent --type byo`
-- **Import agents**: Import existing Bedrock agents with `agentcore import`
+Send the returned `session_id` back on your next call for conversation
+continuity.
 
-### Build Types
+## What it costs
 
-- **CodeZip**: Python source packaged as a zip and deployed directly to AgentCore Runtime
-- **Container**: Docker image built via CodeBuild (ARM64), pushed to ECR, and deployed to AgentCore Runtime
+Kit is free. The AWS services it uses are not, though the defaults are
+deliberately modest: AgentCore consumption pricing, Claude Sonnet tokens,
+S3 Vectors (cents), Lambda and API Gateway (near-zero at trial volume).
+A day of enthusiastic tinkering typically costs a few dollars, dominated
+by model tokens. The deployment guide has an honest cost table.
+Delete the stack and everything it created goes with it — no orphaned
+resources, no surprise bills.
 
-## Documentation
+## Extend it
 
-- [AgentCore CLI](https://github.com/aws/agentcore-cli)
-- [AgentCore CDK Constructs](https://github.com/aws/agentcore-l3-cdk-constructs)
-- [Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/)
+- **Your own knowledge base:** replace `sample-data/` and redeploy
+- **Different model:** set `KIT_MODEL_ID` (any Bedrock inference profile)
+- **MCP servers:** sample client included (`app/kit/mcp_client/`) — off by
+  default because your traffic is yours
+- **Observability:** OpenTelemetry instrumentation is already wired;
+  extension guides cover ADOT and Langfuse
+
+## Security posture
+
+API-key auth on every route, least-privilege IAM throughout, guardrails on
+by default, no unauthenticated endpoints, no third-party calls. The agent's
+sandboxed tools (code interpreter, browser) run in AWS-managed isolation
+outside your container.
+
+## Who made this
+
+[Honest Fox](https://honestfox.com.au) is a Melbourne-based digital agency
+building serverless and AI systems on AWS. Kit is the free, self-serve
+version of how we start every AI engagement: prove it works in *your*
+account first.
+
+If Kit gets you thinking about what an agent could do with your data and
+your workflows — that conversation is what we do.
+**[Book an AI Proof of Concept →](https://honestfox.com.au)**
+
+## License
+
+Apache-2.0. Use it, fork it, ship it.

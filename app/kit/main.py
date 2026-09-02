@@ -30,6 +30,14 @@ preferences the user shares are remembered across sessions. If relevant
 remembered context appears below, use it naturally.
 """
 
+if os.environ.get("KNOWLEDGE_BASE_ID"):
+    DEFAULT_SYSTEM_PROMPT += """
+You have a knowledge base (the retrieve tool). It currently holds sample
+documents about Kookaburra Coffee Co., a fictional Sydney coffee roaster —
+always retrieve before answering questions about that company, and prefer
+retrieved content over general knowledge for anything it covers.
+"""
+
 
 # Define a collection of tools used by the model
 tools = []
@@ -49,6 +57,14 @@ tools.append(add_numbers)
 _REGION = os.environ.get("AWS_REGION", "ap-southeast-2")
 tools.append(AgentCoreCodeInterpreter(region=_REGION).code_interpreter)
 tools.append(AgentCoreBrowser(region=_REGION).browser)
+
+# Knowledge base retrieval (RAG). KNOWLEDGE_BASE_ID is injected by the CDK
+# stack; the retrieve tool reads it from the environment. retrieve is a
+# module-style tool (TOOL_SPEC + function), so the module itself registers.
+if os.environ.get("KNOWLEDGE_BASE_ID"):
+    import strands_tools.retrieve
+
+    tools.append(strands_tools.retrieve)
 
 
 
