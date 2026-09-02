@@ -168,7 +168,9 @@ aws logs describe-log-groups \
   ingestion is retryable.
 - **Agent doesn't remember across sessions** — long-term extraction is
   asynchronous; give it a minute or two after the conversation.
-- **A benign question got blocked** — the guardrail configuration lives in
+- **A benign question got blocked** — content filters are classifier-based
+  and probabilistic; a borderline response occasionally trips one. Retry
+  first. If it recurs, the guardrail configuration lives in
   `agentcore/cdk/lib/cdk-stack.ts`; adjust filter strengths and redeploy
   (bump the guardrail version description to snapshot a new version).
 
