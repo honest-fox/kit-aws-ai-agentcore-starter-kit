@@ -305,10 +305,13 @@ export class AgentCoreStack extends Stack {
           { type: 'HATE', inputStrength: 'HIGH', outputStrength: 'HIGH' },
           { type: 'INSULTS', inputStrength: 'MEDIUM', outputStrength: 'MEDIUM' },
           { type: 'MISCONDUCT', inputStrength: 'MEDIUM', outputStrength: 'MEDIUM' },
-          // MEDIUM, not HIGH: at HIGH, benign meta-questions about the
-          // conversation ("what was my previous question, verbatim?") are
-          // misclassified as prompt-extraction attacks.
-          { type: 'PROMPT_ATTACK', inputStrength: 'MEDIUM', outputStrength: 'NONE' },
+          // LOW: blocks only HIGH-confidence attacks. Verified against the
+          // classifier: instruction-override attacks ("ignore all previous
+          // instructions...") score HIGH confidence and still block, while
+          // benign first-contact phrasing ("introduce yourself in one line,
+          // then tell me...") scores MEDIUM and must pass — at MEDIUM or
+          // HIGH strength the agent blocks ordinary users on first contact.
+          { type: 'PROMPT_ATTACK', inputStrength: 'LOW', outputStrength: 'NONE' },
         ],
       },
     });
@@ -317,7 +320,7 @@ export class AgentCoreStack extends Stack {
     // replacement snapshots the draft into a new numbered version.
     const guardrailVersion = new bedrock.CfnGuardrailVersion(this, 'KitGuardrailVersion', {
       guardrailIdentifier: guardrail.attrGuardrailId,
-      description: 'Kit guardrail: content filters HIGH/MEDIUM, prompt-attack MEDIUM',
+      description: 'Kit guardrail: content filters HIGH/MEDIUM, prompt-attack LOW (high-confidence only)',
     });
     for (const env of this.application.environments.values()) {
       env.runtime.addEnvironmentVariable('KIT_GUARDRAIL_ID', guardrail.attrGuardrailId);

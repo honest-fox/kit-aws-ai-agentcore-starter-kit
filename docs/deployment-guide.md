@@ -164,6 +164,10 @@ aws logs describe-log-groups \
 
 - **`AccessDeniedException` mentioning a model** — Bedrock model access
   isn't enabled in your region. See Prerequisites.
+- **`SSM parameter /cdk-bootstrap/... not found`** — your account/region
+  hasn't been CDK-bootstrapped (a one-time setup): run
+  `npx cdk bootstrap aws://<account-id>/<region>` from `agentcore/cdk/`,
+  then `agentcore deploy` again.
 - **Deploy fails in `CorpusIngestion`** — re-run `agentcore deploy`;
   ingestion is retryable.
 - **Agent doesn't remember across sessions** — long-term extraction is
