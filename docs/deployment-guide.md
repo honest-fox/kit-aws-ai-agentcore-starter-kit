@@ -34,10 +34,74 @@ third-party services are contacted unless you opt in.
 - [Node.js](https://nodejs.org) 20 or later
 - [Python](https://python.org) 3.10+ and [uv](https://docs.astral.sh/uv/)
 - [Docker](https://docker.com) running locally
-- AWS credentials configured (`aws configure`, SSO, or environment
-  variables)
+- Working AWS credentials — with one caveat that trips almost everyone.
+  It gets its own section, next.
 
-## 3. Deploy
+Check the lot in one go:
+
+```bash
+./scripts/preflight.sh
+```
+
+It verifies your tooling, your target file, and — the important one —
+that your credentials are actually visible to the deploy, telling you
+exactly what to fix if they aren't. Worth thirty seconds before a
+twenty-minute deploy.
+
+## 3. Credentials
+
+Read this before your first deploy. It is the single most common way the
+first attempt fails, and the error message points somewhere unhelpful.
+
+**The AgentCore CLI has no `--profile` flag.** It resolves credentials
+through the standard AWS SDK provider chain: environment variables first,
+then whichever profile `AWS_PROFILE` names, and failing that the profile
+literally called `default`.
+
+So `aws sso login --profile my-profile` writes a token into a cache
+belonging to *that named profile*, and nothing tells the default chain to
+go and read it. You log in successfully, the CLI still sees nothing, and
+the deploy fails on step one with `AWS credentials are invalid` — whose
+suggested fix, `aws login`, is not a real command.
+
+Point the chain at the profile you logged into:
+
+```bash
+aws sso login --profile my-profile
+export AWS_PROFILE=my-profile
+
+# confirm — note there is no --profile on this one
+aws sts get-caller-identity
+```
+
+If that prints your account id, the deploy will work. `export` lasts for
+the shell session and covers `agentcore deploy`, `invoke`, `status` and
+`logs` alike.
+
+To avoid the export entirely, make `default` your SSO profile in
+`~/.aws/config`:
+
+```ini
+[sso-session my-org]
+sso_start_url = https://my-org.awsapps.com/start
+sso_region = us-east-1
+sso_registration_scopes = sso:account:access
+
+[default]
+sso_session = my-org
+sso_account_id = 123456789012
+sso_role_name = AdministratorAccess
+region = ap-southeast-2
+```
+
+**If it still fails after all that:** look for a leftover `[default]`
+block in `~/.aws/credentials`. The credentials file always beats the
+config file for the same profile name, so old static keys sitting there
+will shadow the SSO profile you just configured, producing
+`InvalidClientTokenId` no matter how many times you log in. Delete the
+stale block, or use `AWS_PROFILE`, which sidesteps it.
+
+## 4. Deploy
 
 ```bash
 # 1. Install the AgentCore CLI
@@ -52,15 +116,25 @@ cp agentcore/aws-targets.example.json agentcore/aws-targets.json
 # edit aws-targets.json: your 12-digit account id, and your region
 # (ap-southeast-2 is tested first-class; us-east-1 also verified)
 
-# 4. Ship it
+# 4. Check you're ready (thirty seconds, saves twenty minutes)
+./scripts/preflight.sh
+
+# 5. Ship it — from the repo root, not from agentcore/
 agentcore deploy
 ```
+
+`agentcore` commands expect the project root, the directory holding
+`agentcore/`. From the wrong directory they refuse with `Please run this
+command from your project root directory`.
+
+`agentcore deploy --dry-run` validates credentials, builds and synthesises
+the stack, and checks bootstrap status without creating anything.
 
 The first deploy takes 10–20 minutes: it builds the agent container with
 CodeBuild, creates the knowledge base, ingests the sample documents, and
 wires everything together. Subsequent deploys are much faster (~2 minutes).
 
-## 4. First conversation
+## 5. First conversation
 
 ```bash
 agentcore invoke "G'day! Introduce yourself and list what you can do."
@@ -96,7 +170,7 @@ agentcore invoke "Use your code interpreter to compute the SHA-256 of 'hello kit
 agentcore invoke "Use your browser to check the main heading on https://example.com"
 ```
 
-## 5. Use the API
+## 6. Use the API
 
 Your stack outputs include the endpoint URL and API key id
 (`aws cloudformation describe-stacks --stack-name AgentCore-kit-default`):
@@ -118,7 +192,7 @@ their own long-term memory space.
 Requests are throttled (5 req/s, burst 10) and every route requires the
 key. There are no unauthenticated endpoints.
 
-## 6. What it costs
+## 7. What it costs
 
 Kit itself is free. Rough guide to the AWS charges (AUD, ap-southeast-2,
 prices move — check your bill):
@@ -134,20 +208,31 @@ There are **no always-on charges** in the default deployment — no
 provisioned OpenSearch, no idle EC2. If nobody talks to the agent, the
 bill rounds to zero.
 
-## 7. Clean removal
+## 8. Clean removal
 
 ```bash
 aws cloudformation delete-stack --stack-name AgentCore-kit-default
 ```
 
-The stack removes everything it created, including the S3 buckets and
-their contents, the container images, and the vector store — verified:
-no billable resources remain.
+The stack removes everything it created — including the S3 buckets **with
+their contents**. That is not CloudFormation's default behaviour: a
+non-empty bucket normally fails deletion with `BucketNotEmpty`. Kit sets
+`autoDeleteObjects: true` on the corpus bucket, which provisions a custom
+resource that empties it before CloudFormation removes it, and the same
+applies to the ECR repository and its images.
 
-One honest footnote: CloudWatch **log groups** survive deletion (AWS
-creates them outside the stack). They hold your agent's logs, cost
-fractions of a cent, and are sometimes exactly what you want after a
-teardown. To remove them too:
+Verified on a real teardown of the full 54-resource stack: runtime,
+memory, guardrail, knowledge base, vector store, both S3 buckets, ECR
+repo and images, and the API all removed.
+
+Two things survive, for two different reasons.
+
+### 1. CloudWatch log groups
+
+Bedrock and Lambda create these themselves at runtime, *outside* the
+stack, so CloudFormation never has a handle on them. They cost fractions
+of a cent, and are sometimes exactly what you want after a teardown. To
+remove them too:
 
 ```bash
 aws logs describe-log-groups \
@@ -160,8 +245,40 @@ aws logs describe-log-groups \
   xargs -n1 aws logs delete-log-group --log-group-name
 ```
 
-## 8. Troubleshooting
+### 2. The CDK bootstrap stack
 
+`CDKToolkit` is a **separate stack**, created once per account and region
+before Kit ever deploys, and deliberately outliving it. It holds the
+staging bucket your assets were uploaded to (tens of MB per deploy), an
+ECR repository, five IAM roles, and a customer-managed KMS key.
+
+That KMS key is the only survivor with a **real recurring cost** — around
+US$1/month, charged whether or not you use it. Everything else here
+rounds to nothing.
+
+Only remove it if **nothing else in that account and region uses CDK** —
+it is shared infrastructure, and deleting it will break other CDK
+projects:
+
+```bash
+aws cloudformation delete-stack --stack-name CDKToolkit
+
+# The staging bucket is DeletionPolicy: Retain, so it outlives even that
+aws s3 rb s3://cdk-hnb659fds-assets-<account-id>-<region> --force
+```
+
+## 9. Troubleshooting
+
+- **`AWS credentials are invalid` / `InvalidClientTokenId`, even after a
+  fresh SSO login** — the CLI has no `--profile` flag, so an SSO login on
+  a named profile is invisible to it. Run `./scripts/preflight.sh`, which
+  diagnoses this precisely and names a profile that works. See
+  [Credentials](#3-credentials).
+- **`Please run this command from your project root directory`** — you're
+  inside `agentcore/`. All `agentcore` commands run from the repo root.
+- **`agentcore status` shows an agent as Deployed but with a security
+  token error** — the resource list comes from local cached state while
+  the live probe used bad credentials. Same fix as above.
 - **`AccessDeniedException` mentioning a model** — Bedrock model access
   isn't enabled in your region. See Prerequisites.
 - **`SSM parameter /cdk-bootstrap/... not found`** — your account/region
@@ -178,7 +295,7 @@ aws logs describe-log-groups \
   `agentcore/cdk/lib/cdk-stack.ts`; adjust filter strengths and redeploy
   (bump the guardrail version description to snapshot a new version).
 
-## 9. Next steps
+## 10. Next steps
 
 - [Swap in your own knowledge base](extending-knowledge-base.md)
 - [Connect an MCP server](extending-mcp.md)

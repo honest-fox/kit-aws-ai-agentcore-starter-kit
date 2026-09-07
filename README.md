@@ -34,15 +34,23 @@ One CloudFormation stack, deployed with one command:
 ## Quick start
 
 Prerequisites: an AWS account, Node.js 20+, Python 3.10+ with
-[uv](https://docs.astral.sh/uv/), Docker, and AWS credentials configured.
+[uv](https://docs.astral.sh/uv/), Docker, and AWS credentials.
 
 ```bash
 npm install -g @aws/agentcore
 git clone https://github.com/honestfox/kit && cd kit
 cp agentcore/aws-targets.example.json agentcore/aws-targets.json
 # edit aws-targets.json: your account id and region
+
+./scripts/preflight.sh   # thirty seconds, saves twenty minutes
 agentcore deploy
 ```
+
+> **On credentials.** The AgentCore CLI has no `--profile` flag — it reads
+> the standard AWS SDK chain. If you use SSO, `aws sso login --profile foo`
+> alone won't reach it; `export AWS_PROFILE=foo` as well. `preflight.sh`
+> checks this and tells you exactly what to fix. Full detail in the
+> [deployment guide](docs/deployment-guide.md#3-credentials).
 
 Then talk to your agent:
 
