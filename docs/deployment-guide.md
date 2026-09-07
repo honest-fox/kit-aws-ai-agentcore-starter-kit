@@ -2,7 +2,7 @@
 
 This guide takes you from an empty AWS account to a working conversation
 with your own AI agent — including one answer retrieved from the built-in
-knowledge base — in around 20 minutes, most of which is waiting for AWS to
+knowledge base — in about 10 minutes, most of which is waiting for AWS to
 build things.
 
 No AI experience required. If you can run terminal commands, you can
@@ -36,6 +36,10 @@ third-party services are contacted unless you opt in.
 - [Docker](https://docker.com) running locally
 - Working AWS credentials — with one caveat that trips almost everyone.
   It gets its own section, next.
+- **A CDK-bootstrapped account and region.** One-time setup per
+  account *and* per region, described in step 4 below. A fresh account,
+  or an account you have never deployed CDK into in this region, will
+  need it.
 
 Check the lot in one go:
 
@@ -119,9 +123,34 @@ cp agentcore/aws-targets.example.json agentcore/aws-targets.json
 # 4. Check you're ready (thirty seconds, saves twenty minutes)
 ./scripts/preflight.sh
 
-# 5. Ship it — from the repo root, not from agentcore/
+# 5. One-time per account AND region: CDK bootstrap
+#    Skip if preflight says the region is already bootstrapped.
+(cd agentcore/cdk && npx cdk bootstrap aws://<account-id>/<region>)
+
+# 6. Ship it — from the repo root, not from agentcore/
 agentcore deploy
 ```
+
+### About step 5
+
+CDK cannot deploy into an account and region until that pair has been
+bootstrapped: a one-time `CDKToolkit` stack holding a staging bucket, an
+ECR repository, IAM roles, and a KMS key. It is per *region*, so an
+account that happily deploys Kit in `ap-southeast-2` still needs
+bootstrapping before its first deploy in `us-west-2`.
+
+Interactive `agentcore deploy` has a bootstrap confirmation step and will
+offer to do this for you. **Running non-interactively (`-y`, or in CI) it
+does not** — verified: the deploy runs for a couple of minutes, then fails
+with `SSM parameter /cdk-bootstrap/hnb659fds/version not found`.
+
+Note also that the CLI's own `✓ Check bootstrap status` step passes even
+when the region is *not* bootstrapped, so it is not a reliable signal.
+`./scripts/preflight.sh` checks the bootstrap parameter directly and tells
+you before you start.
+
+Bootstrapping is not free: the KMS key it creates costs roughly US$1/month
+and outlives the Kit stack. See [Clean removal](#8-clean-removal).
 
 `agentcore` commands expect the project root, the directory holding
 `agentcore/`. From the wrong directory they refuse with `Please run this
@@ -130,9 +159,13 @@ command from your project root directory`.
 `agentcore deploy --dry-run` validates credentials, builds and synthesises
 the stack, and checks bootstrap status without creating anything.
 
-The first deploy takes 10–20 minutes: it builds the agent container with
-CodeBuild, creates the knowledge base, ingests the sample documents, and
-wires everything together. Subsequent deploys are much faster (~2 minutes).
+The first deploy takes about **5 minutes**: it builds the agent container
+with CodeBuild, creates the knowledge base, ingests the sample documents,
+and wires everything together. Subsequent deploys are faster still
+(~2 minutes).
+
+Measured on a clean first deploy into a freshly-bootstrapped `us-west-2`:
+4m50s. Add ~90 seconds if the region also needs bootstrapping.
 
 ## 5. First conversation
 
@@ -150,6 +183,32 @@ agentcore invoke "What do you remember about me?"
 
 The second answer comes from long-term memory, not the conversation —
 give the extraction a minute or two after the first message.
+
+**Don't take the agent's word for it.** The extracted facts are stored
+server-side and you can read them yourself, with no model in the loop:
+
+```bash
+aws bedrock-agentcore list-memory-records \
+  --memory-id <memory-id-from-stack-outputs> \
+  --namespace /users/default-user/facts \
+  --query 'memoryRecordSummaries[].content.text' --output text
+```
+
+Swap `facts` for `preferences` to see the structured preference records.
+Both namespaces are declared in `agentcore.json`.
+
+Two properties worth verifying while you're there, because they are what
+separate real memory from a model that sounds confident:
+
+- **Isolation.** Call the API with a fresh `actor_id` and ask what it
+  remembers. It should report nothing — each actor gets its own namespace.
+- **No confabulation.** Ask the *known* actor about something you never
+  told it. It should say it has no record, not invent one.
+
+Extraction also infers, not just records: greeting the agent with "G'day"
+produced a stored fact noting likely Australian English. That inference
+happens at write time and lands in the store, so it is inspectable like
+any other record.
 
 ### Prove the RAG works
 

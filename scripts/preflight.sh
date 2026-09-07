@@ -187,6 +187,29 @@ else
   fi
 fi
 
+# -------------------------------------------------------------- bootstrap
+#
+# CDK bootstrap is per account+region and easy to forget when trying a new
+# region. The AgentCore CLI's own "Check bootstrap status" step passes even
+# when the region is not bootstrapped, so the failure surfaces minutes into
+# the deploy instead of up front.
+
+if [ -n "$WANT_REGION" ] && [ -n "$CALLER" ] && [ "$CALLER" != "None" ]; then
+  if aws ssm get-parameter --name /cdk-bootstrap/hnb659fds/version \
+       --region "$WANT_REGION" >/dev/null 2>&1; then
+    ok "CDK bootstrapped in $WANT_REGION"
+  else
+    warn "$WANT_REGION is not CDK-bootstrapped."
+    hint "    Interactive \`agentcore deploy\` offers to do this for you."
+    hint "    Running non-interactively (-y, CI)? Bootstrap first, or the"
+    hint "    deploy fails minutes in with a missing-SSM-parameter error:"
+    printf '      %s(cd agentcore/cdk && npx cdk bootstrap aws://%s/%s)%s\n' \
+      "$B" "$WANT_ACCOUNT" "$WANT_REGION" "$X"
+    hint "    Note: bootstrap creates a customer-managed KMS key, roughly"
+    hint "    US\$1/month, which outlives the Kit stack."
+  fi
+fi
+
 # ---------------------------------------------------------------- verdict
 
 printf '\n'
@@ -199,4 +222,8 @@ if [ "$WARNED" -ne 0 ]; then
 else
   printf '%s✓ Ready to deploy.%s\n\n' "$G" "$X"
 fi
-printf '  Next: %sagentcore deploy%s\n\n' "$B" "$X"
+if [ "$TARGET_NAME" = "default" ]; then
+  printf '  Next: %sagentcore deploy%s\n\n' "$B" "$X"
+else
+  printf '  Next: %sagentcore deploy --target %s%s\n\n' "$B" "$TARGET_NAME" "$X"
+fi

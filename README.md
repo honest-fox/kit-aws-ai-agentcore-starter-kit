@@ -1,6 +1,6 @@
 # Kit — AI Agent Starter Kit by Honest Fox
 
-**Deploy a genuinely working AI agent into your own AWS account in minutes.**
+**Deploy a genuinely working AI agent into your own AWS account in about 10 minutes.**
 Not a chat demo: a production-shaped agent on Amazon Bedrock AgentCore with
 durable memory, working RAG, guardrails, managed tools, and an authenticated
 API — free, open source, and built Sydney-first.
@@ -19,7 +19,10 @@ One CloudFormation stack, deployed with one command:
   one environment variable, no rebuild)
 - **Durable memory** — conversations survive restarts, and the agent
   remembers facts and preferences across sessions (AgentCore Memory,
-  semantic + preference + summary strategies)
+  semantic + preference + summary strategies). Per-actor isolated, and
+  the extracted records are readable server-side with
+  `aws bedrock-agentcore list-memory-records` — verify it rather than
+  trusting the agent's summary
 - **Working RAG out of the box** — a Bedrock Knowledge Base backed by S3
   Vectors, pre-loaded with a sample corpus so retrieval works on your very
   first question. Swap in your own documents by replacing one folder.
