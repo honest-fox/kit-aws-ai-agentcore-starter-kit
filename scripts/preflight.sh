@@ -200,9 +200,9 @@ if [ -n "$WANT_REGION" ] && [ -n "$CALLER" ] && [ "$CALLER" != "None" ]; then
     ok "CDK bootstrapped in $WANT_REGION"
   else
     warn "$WANT_REGION is not CDK-bootstrapped."
-    hint "    Interactive \`agentcore deploy\` offers to do this for you."
-    hint "    Running non-interactively (-y, CI)? Bootstrap first, or the"
-    hint "    deploy fails minutes in with a missing-SSM-parameter error:"
+    hint "    \`agentcore deploy\` will NOT do this for you (CLI 0.28.1),"
+    hint "    interactively or otherwise. Bootstrap first, or the deploy"
+    hint "    fails minutes in with a missing-SSM-parameter error:"
     printf '      %s(cd agentcore/cdk && npx cdk bootstrap aws://%s/%s)%s\n' \
       "$B" "$WANT_ACCOUNT" "$WANT_REGION" "$X"
     hint "    Note: bootstrap creates a customer-managed KMS key, roughly"

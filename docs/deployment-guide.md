@@ -139,13 +139,15 @@ ECR repository, IAM roles, and a KMS key. It is per *region*, so an
 account that happily deploys Kit in `ap-southeast-2` still needs
 bootstrapping before its first deploy in `us-west-2`.
 
-Interactive `agentcore deploy` has a bootstrap confirmation step and will
-offer to do this for you. **Running non-interactively (`-y`, or in CI) it
-does not** — verified: the deploy runs for a couple of minutes, then fails
-with `SSM parameter /cdk-bootstrap/hnb659fds/version not found`.
+**You must do this yourself.** `agentcore deploy` does not bootstrap for
+you — verified both interactively and non-interactively (`-y`). In an
+un-bootstrapped region the deploy runs for a couple of minutes and then
+fails with `SSM parameter /cdk-bootstrap/hnb659fds/version not found`.
+(The CLI does contain a bootstrap-confirmation code path, so this may be
+version-dependent or may yet appear; as of CLI 0.28.1 it does not fire.)
 
-Note also that the CLI's own `✓ Check bootstrap status` step passes even
-when the region is *not* bootstrapped, so it is not a reliable signal.
+Its own `✓ Check bootstrap status` step is no help either: it passes even
+when the region is *not* bootstrapped, so the failure lands minutes later.
 `./scripts/preflight.sh` checks the bootstrap parameter directly and tells
 you before you start.
 
