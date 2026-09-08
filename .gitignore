@@ -4,3 +4,9 @@ __pycache__/
 .bedrock_agentcore.yaml
 .bedrock_agentcore/
 .DS_Store
+
+# Internal planning and marketing material lives outside this repo
+# (~/Code/kit-marketing-material). This repo is public at launch - keep
+# competitor analysis, funnel strategy and marketing drafts out of it.
+brief.md
+marketing/
