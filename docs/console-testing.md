@@ -8,7 +8,7 @@ say, a product owner testing what the engineering team deployed.
 1. Sign in to the AWS Console and switch to the region Kit was deployed
    in (ask your team — usually **Sydney / ap-southeast-2**).
 2. Search for **Bedrock AgentCore** in the top search bar and open it.
-3. Choose **Agent runtimes** in the left menu. You'll see a runtime named
+3. Choose **Build > Runtime** in the left menu. You'll see a runtime named
    **kit_kit-…** — open it.
 4. Open the **Test** tab (the built-in sandbox).
 
@@ -32,8 +32,7 @@ only in Kit's built-in sample documents about a fictional coffee roaster —
 the agent is retrieving, not guessing.
 
 **4. Real computation**
-> Use your code interpreter to calculate the compound interest on $10,000
-> at 5.5% annually for 7 years.
+> Use your code interpreter to calculate the compound interest on $10,000 at 5.5% annually for 7 years.
 
 **5. Live web access**
 > Use your browser tool to visit example.com and tell me its main heading.
