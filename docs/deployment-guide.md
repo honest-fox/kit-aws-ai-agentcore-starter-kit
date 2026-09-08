@@ -290,21 +290,39 @@ Two things survive, for two different reasons.
 
 ### 1. CloudWatch log groups
 
-Bedrock and Lambda create these themselves at runtime, *outside* the
-stack, so CloudFormation never has a handle on them. They cost fractions
-of a cent, and are sometimes exactly what you want after a teardown. To
-remove them too:
+These survive for **two** different reasons, which is worth knowing if you
+are auditing an account:
+
+- **Created outside the stack.** The AgentCore runtime's log group, the
+  CodeBuild project's, and the S3-auto-delete Lambda's are created by the
+  services themselves at runtime, so CloudFormation never has a handle on
+  them.
+- **In the stack, but retained deliberately.** The four Lambda log groups
+  CDK creates explicitly carry `DeletionPolicy: Retain` (the CDK `LogGroup`
+  L2 default) with 731-day retention, so they outlive the stack by design.
+
+Either way they cost fractions of a cent, and are sometimes exactly what
+you want after a teardown. To remove them, all three prefixes:
 
 ```bash
-aws logs describe-log-groups \
-  --log-group-name-prefix /aws/bedrock-agentcore/runtimes/kit \
-  --query 'logGroups[].logGroupName' --output text | \
-  xargs -n1 aws logs delete-log-group --log-group-name
-aws logs describe-log-groups \
-  --log-group-name-prefix /aws/lambda/AgentCore-kit \
-  --query 'logGroups[].logGroupName' --output text | \
-  xargs -n1 aws logs delete-log-group --log-group-name
+for prefix in \
+  /aws/bedrock-agentcore/runtimes/kit \
+  /aws/lambda/AgentCore-kit \
+  /aws/codebuild/AgentCore-kit
+do
+  aws logs describe-log-groups --log-group-name-prefix "$prefix" \
+    --query 'logGroups[].logGroupName' --output text | \
+    tr '\t' '\n' | xargs -r -n1 aws logs delete-log-group --log-group-name
+done
 ```
+
+Adjust `AgentCore-kit` if you deployed under a different stack name.
+
+**Not covered on purpose:** enabling the runtime's transaction search also
+creates account-level `/aws/application-signals/data` and `aws/spans` log
+groups. Those are shared by anything using Application Signals in the
+region, so Kit's teardown deliberately leaves them alone — delete them only
+if you know nothing else depends on them.
 
 ### 2. The CDK bootstrap stack
 
@@ -342,6 +360,22 @@ aws s3 rb s3://cdk-hnb659fds-assets-<account-id>-<region> --force
   the live probe used bad credentials. Same fix as above.
 - **`AccessDeniedException` mentioning a model** — Bedrock model access
   isn't enabled in your region. See Prerequisites.
+- **Deploy succeeds but every invoke fails with `AccessDeniedException:
+  Your account is currently being verified`** — an AWS account-verification
+  gate on Bedrock in that region, not a Kit problem. CloudFormation does not
+  check model entitlement, so the stack builds fine and only invocation
+  fails. AWS says verification normally takes under two hours. Probe a
+  region before committing to it:
+
+  ```bash
+  aws bedrock-runtime converse --region <region> \
+    --model-id us.anthropic.claude-sonnet-5 \
+    --messages '[{"role":"user","content":[{"text":"hi"}]}]' \
+    --inference-config '{"maxTokens":1}'
+  ```
+
+  Encountered on a real account in `us-east-2` while `us-west-1` and
+  `us-west-2` worked, so it is per-region.
 - **`SSM parameter /cdk-bootstrap/... not found`** — your account/region
   hasn't been CDK-bootstrapped (a one-time setup): run
   `npx cdk bootstrap aws://<account-id>/<region>` from `agentcore/cdk/`,
