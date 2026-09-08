@@ -250,8 +250,15 @@ The response includes a `session_id` — send it back in your next request
 to continue the conversation. Pass `actor_id` to give each of your users
 their own long-term memory space.
 
-Requests are throttled (5 req/s, burst 10) and every route requires the
-key. There are no unauthenticated endpoints.
+Requests are throttled (5 req/s, burst 10), capped at 2,000/day, and every
+route requires the key. There are no unauthenticated endpoints. Prompts are
+limited to 20,000 characters.
+
+`actor_id` selects a memory namespace and is **caller-asserted, not
+authenticated** — assign it server-side, never from an untrusted client.
+See [Security](security.md), which also covers what the agent can and
+cannot reach and the prompt-injection exposure that comes with shipping a
+browser and a code interpreter.
 
 ## 7. What it costs
 
@@ -284,7 +291,19 @@ applies to the ECR repository and its images.
 
 Verified on a real teardown of the full 54-resource stack: runtime,
 memory, guardrail, knowledge base, vector store, both S3 buckets, ECR
-repo and images, and the API all removed.
+repo and images, and the API all removed, in about 7 minutes.
+
+**Check that it finished.** Deletion can fail part-way (see
+[Troubleshooting](#9-troubleshooting)), and a stack stuck in
+`DELETE_FAILED` leaves nearly everything billable in place while looking
+deleted. Confirm before you walk away:
+
+```bash
+aws cloudformation describe-stacks --stack-name AgentCore-kit-default \
+  --query 'Stacks[0].StackStatus' --output text
+```
+
+A `Stack ... does not exist` error is the success case.
 
 Two things survive, for two different reasons.
 
@@ -382,6 +401,25 @@ aws s3 rb s3://cdk-hnb659fds-assets-<account-id>-<region> --force
   then `agentcore deploy` again.
 - **Deploy fails in `CorpusIngestion`** — re-run `agentcore deploy`;
   ingestion is retryable.
+- **Stack stuck in `DELETE_FAILED` on the AgentCore runtime** — with
+  `Request timed out while deleting AWS::BedrockAgentCore::Runtime`
+  (`HandlerErrorCode: NotStabilized`). CloudFormation gave up waiting for
+  the runtime to finish deleting; the runtime itself is usually gone, but
+  the stack stops there and **leaves every other resource in place** —
+  memory, knowledge base, vector store, buckets, ECR, KMS key. It looks
+  deleted and is still billing.
+
+  Re-run the delete; it succeeds once the runtime has actually gone:
+
+  ```bash
+  aws cloudformation delete-stack --stack-name AgentCore-kit-default
+  aws cloudformation wait stack-delete-complete --stack-name AgentCore-kit-default
+  ```
+
+  Confirm the runtime is really gone with
+  `aws bedrock-agentcore-control list-agent-runtimes`. A `DELETE_FAILED`
+  stack also blocks redeploying to the same target, so `agentcore deploy`
+  will refuse until it is cleared.
 - **Agent doesn't remember across sessions** — long-term extraction is
   asynchronous; give it a minute or two after the conversation.
 - **A benign question got blocked** — content filters are classifier-based
@@ -392,6 +430,7 @@ aws s3 rb s3://cdk-hnb659fds-assets-<account-id>-<region> --force
 
 ## 10. Next steps
 
+- [Security posture and hardening checklist](security.md)
 - [Swap in your own knowledge base](extending-knowledge-base.md)
 - [Connect an MCP server](extending-mcp.md)
 - [Observability with ADOT or Langfuse](extending-observability.md)

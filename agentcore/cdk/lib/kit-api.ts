@@ -27,9 +27,11 @@ export interface KitApiProps {
 /**
  * Kit programmatic access layer: REST API -> Lambda -> InvokeAgentRuntime.
  *
- * Authenticated by default: requests require an API key (x-api-key header),
- * and a usage plan throttles traffic so a leaked key cannot run up an
- * unbounded Bedrock bill. There is no unauthenticated route.
+ * Authenticated by default: requests require an API key (x-api-key header).
+ * The usage plan sets both a rate throttle and a daily quota: the throttle
+ * caps burst spend, and the quota bounds total spend, so a leaked key cannot
+ * bill indefinitely at the throttle ceiling. There is no unauthenticated
+ * route. Raise the quota for real workloads — it is sized for evaluation.
  */
 export class KitApi extends Construct {
   constructor(scope: Construct, id: string, props: KitApiProps) {
@@ -74,6 +76,10 @@ export class KitApi extends Construct {
     const plan = api.addUsagePlan('KitUsagePlan', {
       name: 'kit-default',
       throttle: { rateLimit: 5, burstLimit: 10 },
+      // Without a quota, 5 req/s sustained is ~432,000 requests/day — the
+      // throttle alone does not bound spend. Sized for evaluation, not
+      // production; raise it deliberately.
+      quota: { limit: 2000, period: apigateway.Period.DAY },
     });
     plan.addApiKey(apiKey);
     plan.addApiStage({ stage: api.deploymentStage });

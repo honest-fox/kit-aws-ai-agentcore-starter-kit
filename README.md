@@ -106,10 +106,18 @@ resources, no surprise bills.
 
 ## Security posture
 
-API-key auth on every route, least-privilege IAM throughout, guardrails on
-by default, no unauthenticated endpoints, no third-party calls. The agent's
-sandboxed tools (code interpreter, browser) run in AWS-managed isolation
-outside your container.
+API-key auth on every route (plus a rate throttle and daily quota),
+least-privilege IAM, guardrails on by default, no unauthenticated
+endpoints, no third-party calls. The agent's sandboxed tools (code
+interpreter, browser) run in AWS-managed isolation outside your container,
+and cannot reach your other AWS resources or your VPC.
+
+Kit ships a browser and a code interpreter into your account, so
+**[docs/security.md](docs/security.md)** states plainly what the agent can
+and cannot reach — including the prompt-injection exposure that comes with
+combining web access, private data, and code execution, and the fact that
+`actor_id` is caller-asserted rather than authenticated. Worth reading
+before you put Kit in front of anyone but yourself.
 
 ## Who made this
 

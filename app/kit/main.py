@@ -110,16 +110,49 @@ def agent_factory():
 get_or_create_agent = agent_factory()
 
 
+# actor_id selects the caller's long-term memory namespace
+# (/users/{actorId}/facts). It is CALLER-ASSERTED: whoever can invoke the
+# runtime chooses it, so it is an identity *label*, not an authenticated
+# identity. Assign it server-side from your own authenticated session — never
+# forward it from an untrusted client, or one user can read another's memory
+# by changing the value. See docs/security.md.
+#
+# The charset is restricted because the value becomes a memory namespace path
+# segment: this keeps separators and traversal sequences out of it.
+_ACTOR_ID_MAX_LEN = 128
+_ACTOR_ID_ALLOWED = set(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:@"
+)
+
+
+def _valid_actor_id(value: Any) -> bool:
+    """Accept a non-empty, bounded, separator-free actor id."""
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= _ACTOR_ID_MAX_LEN
+        and set(value) <= _ACTOR_ID_ALLOWED
+        and value not in (".", "..")
+    )
+
+
 def _extract_actor_id(payload, context) -> str:
     """Actor (user) identity for memory namespacing: payload field, then the
-    AgentCore custom user-id header, then a shared default."""
+    AgentCore custom user-id header, then a shared default.
+
+    Rejects malformed ids rather than passing them through to the memory
+    namespace; an invalid value falls through to the next source.
+    """
     actor_id = payload.get("actor_id") if isinstance(payload, dict) else None
-    if isinstance(actor_id, str) and actor_id:
-        return actor_id
+    if actor_id is not None:
+        if _valid_actor_id(actor_id):
+            return actor_id
+        log.warning("Rejected malformed actor_id; falling back to default")
     headers = getattr(context, "request_headers", None) or {}
     for header_key, value in headers.items():
         if header_key.lower() == "x-amzn-bedrock-agentcore-runtime-user-id" and value:
-            return value
+            if _valid_actor_id(value):
+                return value
+            log.warning("Rejected malformed actor_id header; falling back to default")
     return "default-user"
 
 
