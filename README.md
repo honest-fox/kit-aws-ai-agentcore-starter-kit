@@ -41,7 +41,7 @@ Prerequisites: an AWS account, Node.js 20+, Python 3.10+ with
 
 ```bash
 npm install -g @aws/agentcore
-git clone https://github.com/honestfox/kit && cd kit
+git clone https://github.com/honest-fox/kit-aws-ai-agentcore-starter-kit kit && cd kit
 cp agentcore/aws-targets.example.json agentcore/aws-targets.json
 # edit aws-targets.json: your account id and region
 

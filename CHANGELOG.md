@@ -71,4 +71,4 @@ documented.
 - API defaults (2,000 requests/day, 20,000-character prompts) are sized
   for evaluation, not production.
 
-[0.1.0]: https://github.com/honest-fox/kit/releases/tag/v0.1.0
+[0.1.0]: https://github.com/honest-fox/kit-aws-ai-agentcore-starter-kit/releases/tag/v0.1.0

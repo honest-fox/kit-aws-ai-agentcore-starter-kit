@@ -112,7 +112,7 @@ stale block, or use `AWS_PROFILE`, which sidesteps it.
 npm install -g @aws/agentcore
 
 # 2. Get Kit
-git clone https://github.com/honestfox/kit
+git clone https://github.com/honest-fox/kit-aws-ai-agentcore-starter-kit kit
 cd kit
 
 # 3. Point it at your account
