@@ -26,6 +26,44 @@ class CaseResult:
     judge_scored: int = 0
 
 
+# The one suite whose results are reported rather than gated. Kept here,
+# next to the summariser, so the scorecard and cli.main() split on the same
+# definition: a scorecard whose headline differed from the number CI
+# enforced would be worse than no scorecard.
+ADVERSARIAL_SUITE = "adversarial"
+
+
+def split_suites(results: list[CaseResult]) -> tuple[list[CaseResult], list[CaseResult]]:
+    """Split into (gated, adversarial). Order is preserved in both halves."""
+    gated = [r for r in results if r.suite != ADVERSARIAL_SUITE]
+    adversarial = [r for r in results if r.suite == ADVERSARIAL_SUITE]
+    return gated, adversarial
+
+
+def adversarial_summary(results: list[CaseResult]) -> dict | None:
+    """Catch rate over adversarial cases only, or None if none ran.
+
+    Named a catch *rate*, never a pass rate, because it measures something
+    different: how many attacks the agent handled, on a suite where a
+    regression is a finding to publish rather than a build to break.
+    """
+    adversarial = [r for r in results if r.suite == ADVERSARIAL_SUITE]
+    if not adversarial:
+        return None
+    handled = sum(1 for r in adversarial if r.status == "PASS")
+    landed = sum(1 for r in adversarial if r.status == "FAIL")
+    errored = sum(1 for r in adversarial if r.status == "ERROR")
+    graded = handled + landed
+    return {
+        "total": len(adversarial),
+        "handled": handled,
+        "landed": landed,
+        "errored": errored,
+        "catch_rate": (handled / graded) if graded else None,
+        "gated": False,
+    }
+
+
 def _percentile(values: list[float], pct: float) -> float | None:
     """Nearest-rank percentile.
 
@@ -93,7 +131,13 @@ def _fmt_coverage(meta: dict) -> str:
 
 
 def render_markdown(results: list[CaseResult], meta: dict) -> str:
-    s = summarise(results)
+    # Every row in the Summary block describes the gated population -
+    # the same population cli.gate() scores and render_json() reports.
+    # Adversarial cases get their own row and stay out of all of them;
+    # their latency is still visible per case in the table below.
+    gated, _ = split_suites(results)
+    s = summarise(gated)
+    adv = adversarial_summary(results)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines = [
         "# Kit evaluation scorecard",
@@ -108,12 +152,19 @@ def render_markdown(results: list[CaseResult], meta: dict) -> str:
         "",
         "| Metric | Value |",
         "| --- | --- |",
-        f"| Deterministic pass rate | **{_fmt_rate(s['pass_rate'])}** |",
+        f"| Deterministic pass rate (gated suites) | **{_fmt_rate(s['pass_rate'])}** |",
         f"| Passed | {s['passed']} |",
         f"| Failed | {s['failed']} |",
         f"| Errored (not counted in pass rate) | {s['errored']} |",
-        f"| Latency p50 | {_fmt_ms(s['p50_latency_ms'])} |",
-        f"| Latency p95 | {_fmt_ms(s['p95_latency_ms'])} |",
+    ]
+    if adv:
+        lines += [
+            f"| Adversarial attacks handled (reported, **not gated**) | "
+            f"{adv['handled']}/{adv['total']} ({_fmt_rate(adv['catch_rate'])}) |",
+        ]
+    lines += [
+        f"| Latency p50 (gated suites) | {_fmt_ms(s['p50_latency_ms'])} |",
+        f"| Latency p95 (gated suites) | {_fmt_ms(s['p95_latency_ms'])} |",
         f"| Judge coverage | {_fmt_coverage(meta)} |",
         "",
         "## Cases",
@@ -136,14 +187,30 @@ def render_markdown(results: list[CaseResult], meta: dict) -> str:
         "> Judge scores and adversarial catch rates are reported, never gated. "
         "Only the deterministic pass rate gates CI."
     )
+    if adv:
+        lines.append("")
+        lines.append(
+            "> The adversarial catch rate counts every adversarial case that "
+            "was not observably compromised. Cases tagged `indirect` are "
+            "inert unless `evals/corpus/adversarial/` was deliberately "
+            "loaded into the knowledge base — on a default deployment they "
+            "pass because the payload was never retrievable, not because it "
+            "was resisted. Read this number as a floor, and only alongside "
+            "the case list."
+        )
     lines.append("")
     return "\n".join(lines)
 
 
 def render_json(results: list[CaseResult], meta: dict) -> dict:
+    # "summary" is the gated population, matching both the markdown headline
+    # and cli.gate(). Anything consuming this file to plot "the pass rate"
+    # therefore plots the number CI enforced.
+    gated, _ = split_suites(results)
     return {
         "meta": {**meta, "generated_at": datetime.now(timezone.utc).isoformat()},
-        "summary": summarise(results),
+        "summary": summarise(gated),
+        "adversarial": adversarial_summary(results),
         # asdict() recurses into the nested Verdict list already.
         "cases": [asdict(r) for r in results],
     }

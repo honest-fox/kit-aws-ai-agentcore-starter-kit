@@ -1,4 +1,7 @@
-from harness.report import CaseResult, summarise, render_markdown, render_json
+from harness.report import (
+    CaseResult, summarise, render_markdown, render_json,
+    adversarial_summary, split_suites,
+)
 from harness.graders.deterministic import Verdict
 
 
@@ -109,3 +112,96 @@ def test_coverage_reads_not_run_when_the_judge_was_disabled():
     md = render_markdown([result("a", "s", "PASS")],
                          {"model_id": "m", "region": "r", "git_sha": "s"})
     assert "not run" in md
+
+
+# --- adversarial split ----------------------------------------------------
+#
+# The scorecard is a committed artifact. If its headline rate covered a
+# different population from the one cli.gate() scores, the published number
+# and the enforced number would diverge silently - the failure mode that
+# makes a scorecard worse than none.
+
+
+def test_headline_pass_rate_ignores_adversarial_results():
+    results = [
+        result("a", "retrieval", "PASS"),
+        result("b", "retrieval", "PASS"),
+        result("x", "adversarial", "FAIL"),
+        result("y", "adversarial", "FAIL"),
+    ]
+    assert summarise([r for r in results if r.suite != "adversarial"])["pass_rate"] == 1.0
+    md = render_markdown(results, {"model_id": "m", "region": "r", "git_sha": "s"})
+    headline = next(l for l in md.splitlines() if "Deterministic pass rate" in l)
+    # 2/2, not 2/4: the two adversarial FAILs must not move it.
+    assert "100.0%" in headline
+
+
+def test_adversarial_catch_rate_is_its_own_row_marked_not_gated():
+    results = [
+        result("a", "retrieval", "PASS"),
+        result("x", "adversarial", "PASS"),
+        result("y", "adversarial", "FAIL"),
+    ]
+    md = render_markdown(results, {"model_id": "m", "region": "r", "git_sha": "s"})
+    row = next(l for l in md.splitlines() if "Adversarial attacks handled" in l)
+    assert "1/2" in row
+    assert "50.0%" in row
+    assert "not gated" in row
+
+
+def test_cases_table_still_lists_adversarial_cases():
+    results = [
+        result("a", "retrieval", "PASS"),
+        result("x", "adversarial", "FAIL"),
+    ]
+    md = render_markdown(results, {"model_id": "m", "region": "r", "git_sha": "s"})
+    assert "| `x` | adversarial | FAIL |" in md
+
+
+def test_no_adversarial_row_when_no_adversarial_cases_ran():
+    md = render_markdown([result("a", "retrieval", "PASS")],
+                         {"model_id": "m", "region": "r", "git_sha": "s"})
+    assert "Adversarial attacks handled" not in md
+    assert adversarial_summary([result("a", "retrieval", "PASS")]) is None
+
+
+def test_scorecard_states_that_indirect_cases_are_inert_without_the_corpus():
+    # Counting a trivially-passing indirect case as a caught attack would
+    # overstate the catch rate. The number ships with that caveat attached.
+    md = render_markdown([result("x", "adversarial", "PASS")],
+                         {"model_id": "m", "region": "r", "git_sha": "s"})
+    assert "inert unless" in md
+    assert "evals/corpus/adversarial/" in md
+
+
+def test_json_summary_covers_the_same_population_as_the_gate():
+    results = [
+        result("a", "retrieval", "PASS"),
+        result("x", "adversarial", "FAIL"),
+    ]
+    payload = render_json(results, {"model_id": "m", "region": "r", "git_sha": "s"})
+    assert payload["summary"]["total"] == 1
+    assert payload["summary"]["pass_rate"] == 1.0
+    assert payload["adversarial"]["total"] == 1
+    assert payload["adversarial"]["landed"] == 1
+    assert payload["adversarial"]["gated"] is False
+    # Every case is still on record, adversarial included.
+    assert {c["case_id"] for c in payload["cases"]} == {"a", "x"}
+
+
+def test_catch_rate_is_none_when_every_adversarial_case_errored():
+    adv = adversarial_summary([result("x", "adversarial", "ERROR", error="timeout")])
+    assert adv["catch_rate"] is None
+    assert adv["errored"] == 1
+
+
+def test_split_suites_keeps_every_result_in_exactly_one_half():
+    results = [
+        result("a", "retrieval", "PASS"),
+        result("x", "adversarial", "FAIL"),
+        result("b", "memory", "ERROR", error="boom"),
+    ]
+    gated, adversarial = split_suites(results)
+    assert [r.case_id for r in gated] == ["a", "b"]
+    assert [r.case_id for r in adversarial] == ["x"]
+    assert len(gated) + len(adversarial) == len(results)

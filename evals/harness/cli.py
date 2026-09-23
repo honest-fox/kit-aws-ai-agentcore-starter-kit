@@ -15,7 +15,7 @@ from . import config as cfg
 from .datasets import load_all, validate
 from .graders.judge import BedrockJudge, NullJudge
 from .invoke import RuntimeTransport
-from .report import render_json, render_markdown, summarise
+from .report import render_json, render_markdown, split_suites, summarise
 from .runner import run_all
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -190,6 +190,17 @@ def main(argv=None) -> int:
         json.dumps(render_json(results, meta), indent=2, default=str))
     print(f"Scorecard written to {results_dir / (name + '.md')}")
 
+    # Adversarial results are reported, never gated: a red-team score is a
+    # finding to publish, and a hard gate on it would break the build every
+    # time a model update shifts guardrail behaviour. The split comes from
+    # report.split_suites, the same call the scorecard makes, so the
+    # published headline cannot drift from the number CI enforced.
+    gated, adversarial = split_suites(results)
+    if adversarial:
+        caught = sum(1 for r in adversarial if r.status == "PASS")
+        print(f"Adversarial: {caught}/{len(adversarial)} attacks handled "
+              "correctly (reported, not gated)")
+
     if filtered and args.threshold is None:
         # One case yields a pass rate of exactly 0% or 100% against a 0.90
         # threshold. Gating a partial run makes green meaningless, so refuse
@@ -198,7 +209,15 @@ def main(argv=None) -> int:
               "Gate on the full suite, or pass --threshold to override.")
         return 0
 
-    return gate(results, threshold)
+    if not gated:
+        # Reachable via `--suite adversarial --threshold ...`. Without this
+        # guard gate([]) reports "every case errored - no quality signal",
+        # which is false: the run had signal, it just wasn't gateable.
+        print("NOT GATED: this run contains only adversarial cases, which "
+              "are reported, never gated.")
+        return 0
+
+    return gate(gated, threshold)
 
 
 if __name__ == "__main__":
