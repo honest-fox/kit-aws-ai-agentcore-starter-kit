@@ -3,7 +3,10 @@
 
 # Expected value: 47 x 62.00 = 2914.00, x 1.10 = 3205.40.
 - id: tools-code-interpreter-arithmetic
-  prompt: "Using the code interpreter, calculate 47 wholesale bags at $62.00 each, then add 10% GST. Show the final number."
+  # Deliberately GST-neutral: sample-data/products.md states prices already
+  # include GST, so "add 10% GST" would ask the agent to tax a taxed price -
+  # and an agent that correctly pushed back would fail this case.
+  prompt: "Using the code interpreter, calculate 47 multiplied by 62.00, then increase that result by 10%. Show the final number."
   tags: [tools, code-interpreter]
   grade:
     - { type: numeric, value: 3205.40, tolerance: 0.5 }

@@ -36,8 +36,9 @@
   prompt: "How long is the warranty on the co-branded Comandante grinder?"
   tags: [retrieval, warranty]
   grade:
-    - { type: contains_all, values: ["5"] }
-    - { type: contains_any, values: ["year"] }
+    # "5" alone matches inside "$415.00", so a wrong answer quoting the
+    # price and a 1-year warranty would pass. Pin the 5 to the unit.
+    - { type: regex, pattern: '(?i)\b(5|five)[\s-]?year' }
     - { type: judge, criterion: groundedness }
 
 - id: retrieval-roast-days
@@ -59,7 +60,7 @@
   prompt: "What's the minimum order for a wholesale account?"
   tags: [retrieval, wholesale]
   grade:
-    - { type: contains_all, values: ["10kg"] }
+    - { type: contains_any, values: ["10kg", "10 kg", "10 kilogram"] }
     - { type: judge, criterion: groundedness }
 
 - id: retrieval-decaf-price
