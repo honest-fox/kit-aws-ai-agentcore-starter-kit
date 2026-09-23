@@ -1,0 +1,79 @@
+import pytest
+from harness.graders.deterministic import grade, KNOWN_TYPES, Verdict
+
+
+def test_contains_all_passes_when_every_value_present():
+    v = grade({"type": "contains_all", "values": ["19.50", "Marrickville"]},
+              "Marrickville Morning is $19.50 for 250g.")
+    assert v.passed
+
+
+def test_contains_all_fails_and_names_the_missing_value():
+    v = grade({"type": "contains_all", "values": ["19.50", "62.00"]},
+              "Marrickville Morning is $19.50 for 250g.")
+    assert not v.passed
+    assert "62.00" in v.detail
+
+
+def test_contains_any_passes_on_one_match():
+    v = grade({"type": "contains_any", "values": ["decaf", "Featherweight"]},
+              "You drink decaf.")
+    assert v.passed
+
+
+def test_not_contains_fails_when_forbidden_text_present():
+    v = grade({"type": "not_contains", "values": ["I don't have"]},
+              "I don't have that information.")
+    assert not v.passed
+
+
+def test_matching_is_case_insensitive():
+    v = grade({"type": "contains_all", "values": ["MARRICKVILLE"]},
+              "marrickville morning")
+    assert v.passed
+
+
+def test_regex_matches():
+    v = grade({"type": "regex", "pattern": r"\$\d+\.\d{2}"}, "It costs $19.50.")
+    assert v.passed
+
+
+def test_numeric_within_tolerance():
+    v = grade({"type": "numeric", "value": 19.50, "tolerance": 0.01},
+              "The price is $19.50 including GST.")
+    assert v.passed
+
+
+def test_numeric_ignores_thousands_separators():
+    v = grade({"type": "numeric", "value": 1500.0, "tolerance": 0.01},
+              "Revenue was $1,500.00 last month.")
+    assert v.passed
+
+
+def test_numeric_fails_when_no_number_is_close_enough():
+    v = grade({"type": "numeric", "value": 19.50, "tolerance": 0.01},
+              "The price is $21.00.")
+    assert not v.passed
+
+
+def test_refused_detects_guardrail_intervention():
+    v = grade({"type": "refused", "expected": True},
+              "Sorry, I can't help with that request.")
+    assert v.passed
+
+
+def test_refused_expected_false_passes_on_a_normal_answer():
+    v = grade({"type": "refused", "expected": False},
+              "Marrickville Morning is $19.50.")
+    assert v.passed
+
+
+def test_unknown_assertion_type_raises():
+    with pytest.raises(ValueError, match="unknown assertion type"):
+        grade({"type": "vibes"}, "anything")
+
+
+def test_judge_is_a_known_type_but_not_graded_here():
+    assert "judge" in KNOWN_TYPES
+    with pytest.raises(ValueError, match="judge assertions"):
+        grade({"type": "judge", "criterion": "groundedness"}, "text")
