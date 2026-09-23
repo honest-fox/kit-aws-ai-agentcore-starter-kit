@@ -41,11 +41,26 @@ class Case:
     settle_seconds: int = 0
 
 
-def _parse_turn(raw: dict) -> Turn:
+def _grade_list(raw: dict, where: str) -> list[dict]:
+    grade = raw.get("grade", [])
+    if not isinstance(grade, list):
+        raise ValueError(f"{where}: 'grade' must be a list of assertions")
+    for assertion in grade:
+        if not isinstance(assertion, dict):
+            raise ValueError(
+                f"{where}: each assertion must be a mapping, got {assertion!r}")
+    return list(grade)
+
+
+def _parse_turn(raw: dict, where: str) -> Turn:
+    if not isinstance(raw, dict):
+        raise ValueError(f"{where}: each turn must be a mapping, got {raw!r}")
+    if "prompt" not in raw:
+        raise ValueError(f"{where}: turn missing 'prompt'")
     return Turn(
         prompt=raw["prompt"],
         new_session=bool(raw.get("new_session", False)),
-        grade=list(raw.get("grade", [])),
+        grade=_grade_list(raw, where),
     )
 
 
@@ -53,20 +68,44 @@ def load_suite(path: Path | str) -> list[Case]:
     """Load one YAML file. The file stem becomes the suite name."""
     path = Path(path)
     raw_cases = yaml.safe_load(path.read_text()) or []
+    if not isinstance(raw_cases, list):
+        raise ValueError(
+            f"{path.name}: file must contain a list of cases, "
+            f"got {type(raw_cases).__name__}")
+
     cases: list[Case] = []
-    for raw in raw_cases:
+    for index, raw in enumerate(raw_cases):
+        if not isinstance(raw, dict):
+            raise ValueError(f"{path.name}[{index}]: case must be a mapping")
         if "id" not in raw:
-            raise ValueError(f"{path.name}: case missing 'id'")
+            raise ValueError(f"{path.name}[{index}]: case missing 'id'")
+        where = f"{path.name}:{raw['id']}"
+
         if "turns" in raw:
-            turns = [_parse_turn(t) for t in raw["turns"]]
+            if not isinstance(raw["turns"], list):
+                raise ValueError(f"{where}: 'turns' must be a list")
+            turns = [
+                _parse_turn(t, f"{where} turn {i}")
+                for i, t in enumerate(raw["turns"])
+            ]
+        elif "prompt" in raw:
+            turns = [Turn(prompt=raw["prompt"], grade=_grade_list(raw, where))]
         else:
-            turns = [Turn(prompt=raw["prompt"], grade=list(raw.get("grade", [])))]
+            raise ValueError(f"{where}: case needs either 'prompt' or 'turns'")
+
+        try:
+            settle = int(raw.get("settle_seconds", 0))
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"{where}: 'settle_seconds' must be a whole number of seconds, "
+                f"got {raw['settle_seconds']!r}") from None
+
         cases.append(Case(
             id=raw["id"],
             suite=path.stem,
             turns=turns,
             tags=list(raw.get("tags", [])),
-            settle_seconds=int(raw.get("settle_seconds", 0)),
+            settle_seconds=settle,
         ))
     return cases
 

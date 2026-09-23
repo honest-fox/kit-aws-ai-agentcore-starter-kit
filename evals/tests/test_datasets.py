@@ -93,3 +93,59 @@ def test_load_suite_rejects_a_case_without_an_id(tmp_path):
 """)
     with pytest.raises(ValueError, match="missing 'id'"):
         load_suite(p)
+
+
+# Malformed datasets must name the file and case, not raise a bare KeyError.
+# Editing these YAML files is the main way anyone extends the eval suite.
+
+def test_case_with_neither_prompt_nor_turns_names_the_case(tmp_path):
+    p = write(tmp_path, "bad.yaml", """
+- id: empty-case
+  tags: [x]
+""")
+    with pytest.raises(ValueError, match="empty-case: case needs either 'prompt' or 'turns'"):
+        load_suite(p)
+
+
+def test_turn_missing_prompt_names_the_turn(tmp_path):
+    p = write(tmp_path, "bad.yaml", """
+- id: bad-turn
+  turns:
+    - prompt: "fine"
+    - new_session: true
+""")
+    with pytest.raises(ValueError, match=r"bad-turn turn 1: turn missing 'prompt'"):
+        load_suite(p)
+
+
+def test_top_level_mapping_is_rejected_with_a_readable_message(tmp_path):
+    p = write(tmp_path, "bad.yaml", """
+id: not-a-list
+prompt: "oops"
+""")
+    with pytest.raises(ValueError, match="must contain a list of cases"):
+        load_suite(p)
+
+
+def test_grade_written_as_a_mapping_is_rejected(tmp_path):
+    p = write(tmp_path, "bad.yaml", """
+- id: bad-grade
+  prompt: "hi"
+  grade:
+    type: contains_all
+    values: ["a"]
+""")
+    with pytest.raises(ValueError, match="'grade' must be a list"):
+        load_suite(p)
+
+
+def test_non_numeric_settle_seconds_names_the_case(tmp_path):
+    p = write(tmp_path, "bad.yaml", """
+- id: bad-settle
+  settle_seconds: soon
+  prompt: "hi"
+  grade:
+    - { type: contains_all, values: ["a"] }
+""")
+    with pytest.raises(ValueError, match="bad-settle: 'settle_seconds' must be a whole number"):
+        load_suite(p)
