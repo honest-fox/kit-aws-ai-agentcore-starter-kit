@@ -103,3 +103,46 @@ def test_judge_attempts_and_scores_are_counted():
     assert r.judge_attempted == 1
     assert r.judge_scored == 0        # NullJudge never scores
     assert r.judge_scores == {}       # unscored criteria are omitted
+
+
+def test_a_multi_turn_judge_sees_the_conversation_not_just_the_last_prompt():
+    # Judging "What do I drink?" in isolation would score a CORRECT answer
+    # low, because the grounding material is in a turn the judge never saw.
+    seen = {}
+
+    class RecordingJudge:
+        def score(self, criterion, question, answer):
+            seen["question"] = question
+            from harness.graders.judge import JudgeScore
+            return JudgeScore(criterion, 5.0, "r")
+
+    turns = [
+        Turn("Remember I drink decaf.", False, []),
+        Turn("What do I drink?", False, [
+            {"type": "contains_all", "values": ["decaf"]},
+            {"type": "judge", "criterion": "groundedness"}]),
+    ]
+    run_case(case(turns=turns), FakeTransport(["noted", "you drink decaf"]),
+             RecordingJudge(), "run1", sleep=lambda s: None)
+    assert "Remember I drink decaf." in seen["question"]
+    assert "noted" in seen["question"]
+
+
+def test_verdicts_are_kept_when_a_later_turn_errors():
+    turns = [
+        Turn("first", False, [{"type": "contains_all", "values": ["ok"]}]),
+        Turn("second", False, [{"type": "contains_all", "values": ["ok"]}]),
+    ]
+    t = FakeTransport(["ok"] + [RuntimeError("boom")] * 3)
+    r = run_case(case(turns=turns), t, NullJudge(), "run1", retries=3,
+                 sleep=lambda s: None)
+    assert r.status == "ERROR"
+    assert len(r.assertions) == 1     # turn 1's evidence survives
+
+
+def test_fake_transport_exhaustion_is_not_swallowed_as_an_error_status():
+    # The guard exists to fail loudly on an off-by-one in the runner.
+    import pytest
+    with pytest.raises(AssertionError, match="exhausted"):
+        run_case(case(), FakeTransport([]), NullJudge(), "run1",
+                 sleep=lambda s: None)
