@@ -74,6 +74,22 @@ def _fmt_ms(ms: float | None) -> str:
     return "n/a" if ms is None else f"{ms:.0f}ms"
 
 
+def _fmt_coverage(meta: dict) -> str:
+    """How many judge assertions actually produced a score.
+
+    A judge that silently returns nothing - a fence-wrapping model, a wrong
+    envelope path, a throttle - renders identically to one that was never
+    run: a column of dashes, CI green. Stating coverage explicitly means a
+    reader can tell "scored 3.9" from "scored nothing".
+    """
+    attempted = meta.get("judge_attempted")
+    if not attempted:
+        return "not run"
+    scored = meta.get("judge_scored", 0)
+    note = "" if scored == attempted else "  **judge degraded**"
+    return f"{scored}/{attempted} scored{note}"
+
+
 def render_markdown(results: list[CaseResult], meta: dict) -> str:
     s = summarise(results)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -96,6 +112,7 @@ def render_markdown(results: list[CaseResult], meta: dict) -> str:
         f"| Errored (not counted in pass rate) | {s['errored']} |",
         f"| Latency p50 | {_fmt_ms(s['p50_latency_ms'])} |",
         f"| Latency p95 | {_fmt_ms(s['p95_latency_ms'])} |",
+        f"| Judge coverage | {_fmt_coverage(meta)} |",
         "",
         "## Cases",
         "",

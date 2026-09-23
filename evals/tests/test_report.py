@@ -87,3 +87,25 @@ def test_latency_excludes_errored_cases_from_the_sample():
         result("b", "s", "ERROR", latency=60000.0, error="timeout"),
     ]
     assert summarise(results)["p50_latency_ms"] == 10.0
+
+
+def test_judge_coverage_is_stated_so_silent_blankness_is_visible():
+    md = render_markdown([result("a", "s", "PASS")], {
+        "model_id": "m", "region": "r", "git_sha": "s",
+        "judge_attempted": 12, "judge_scored": 0})
+    assert "0/12 scored" in md
+    assert "judge degraded" in md
+
+
+def test_full_judge_coverage_is_not_flagged_as_degraded():
+    md = render_markdown([result("a", "s", "PASS")], {
+        "model_id": "m", "region": "r", "git_sha": "s",
+        "judge_attempted": 12, "judge_scored": 12})
+    assert "12/12 scored" in md
+    assert "judge degraded" not in md
+
+
+def test_coverage_reads_not_run_when_the_judge_was_disabled():
+    md = render_markdown([result("a", "s", "PASS")],
+                         {"model_id": "m", "region": "r", "git_sha": "s"})
+    assert "not run" in md
