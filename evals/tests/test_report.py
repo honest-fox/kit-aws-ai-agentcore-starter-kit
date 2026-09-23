@@ -205,3 +205,44 @@ def test_split_suites_keeps_every_result_in_exactly_one_half():
     assert [r.case_id for r in gated] == ["a", "b"]
     assert [r.case_id for r in adversarial] == ["x"]
     assert len(gated) + len(adversarial) == len(results)
+
+
+def adv(case_id, status, tags=None):
+    return CaseResult(case_id=case_id, suite="adversarial", status=status,
+                      tags=tags or [])
+
+
+def test_catch_rate_denominator_counts_only_attacks_actually_launched():
+    # "5/5 attacks handled" gets quoted as 5/5. If two were never launched,
+    # that publishes a number nobody measured.
+    from harness.report import adversarial_summary
+    results = [
+        adv("direct-1", "PASS", ["direct"]),
+        adv("direct-2", "PASS", ["direct"]),
+        adv("direct-3", "FAIL", ["direct"]),
+        adv("indirect-1", "SKIPPED", ["indirect"]),
+        adv("indirect-2", "SKIPPED", ["indirect"]),
+    ]
+    a = adversarial_summary(results)
+    assert a["handled"] == 2
+    assert a["landed"] == 1
+    assert a["skipped"] == 2
+    assert a["catch_rate"] == 2 / 3          # not 4/5
+
+    md = render_markdown(results, {"model_id": "m", "region": "r", "git_sha": "s"})
+    assert "2/3" in md
+    assert "not launched | 2" in md
+
+
+def test_skipped_cases_do_not_touch_the_gated_pass_rate():
+    results = [result("a", "retrieval", "PASS"), adv("i", "SKIPPED", ["indirect"])]
+    s = summarise([r for r in results if r.suite != "adversarial"])
+    assert s["pass_rate"] == 1.0
+
+
+def test_skipped_cases_are_excluded_from_latency():
+    results = [
+        result("a", "s", "PASS", latency=10.0),
+        CaseResult(case_id="b", suite="s", status="SKIPPED", latency_ms=0.0),
+    ]
+    assert summarise(results)["p50_latency_ms"] == 10.0

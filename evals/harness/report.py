@@ -24,6 +24,7 @@ class CaseResult:
     error: str | None = None
     judge_attempted: int = 0
     judge_scored: int = 0
+    tags: list[str] = field(default_factory=list)
 
 
 # The one suite whose results are reported rather than gated. Kept here,
@@ -53,12 +54,15 @@ def adversarial_summary(results: list[CaseResult]) -> dict | None:
     handled = sum(1 for r in adversarial if r.status == "PASS")
     landed = sum(1 for r in adversarial if r.status == "FAIL")
     errored = sum(1 for r in adversarial if r.status == "ERROR")
+    # An attack that was never launched is not an attack that was caught.
+    skipped = sum(1 for r in adversarial if r.status == "SKIPPED")
     graded = handled + landed
     return {
         "total": len(adversarial),
         "handled": handled,
         "landed": landed,
         "errored": errored,
+        "skipped": skipped,
         "catch_rate": (handled / graded) if graded else None,
         "gated": False,
     }
@@ -93,13 +97,16 @@ def summarise(results: list[CaseResult]) -> dict:
     passed = sum(1 for r in results if r.status == "PASS")
     failed = sum(1 for r in results if r.status == "FAIL")
     errored = sum(1 for r in results if r.status == "ERROR")
+    skipped = sum(1 for r in results if r.status == "SKIPPED")
     graded = passed + failed
-    latencies = [r.latency_ms for r in results if r.status != "ERROR"]
+    latencies = [r.latency_ms for r in results
+                 if r.status not in ("ERROR", "SKIPPED")]
     return {
         "total": len(results),
         "passed": passed,
         "failed": failed,
         "errored": errored,
+        "skipped": skipped,
         "pass_rate": (passed / graded) if graded else None,
         "p50_latency_ms": _percentile(latencies, 0.50),
         "p95_latency_ms": _percentile(latencies, 0.95),
@@ -158,10 +165,20 @@ def render_markdown(results: list[CaseResult], meta: dict) -> str:
         f"| Errored (not counted in pass rate) | {s['errored']} |",
     ]
     if adv:
+        # Denominator is attacks actually LAUNCHED, not total cases. An
+        # indirect case skipped because the poisoned corpus was not loaded
+        # was never an attack, and counting it as handled would publish a
+        # catch rate that was never measured - the number a reader quotes.
+        launched = adv["handled"] + adv["landed"]
         lines += [
             f"| Adversarial attacks handled (reported, **not gated**) | "
-            f"{adv['handled']}/{adv['total']} ({_fmt_rate(adv['catch_rate'])}) |",
+            f"{adv['handled']}/{launched} ({_fmt_rate(adv['catch_rate'])}) |",
         ]
+        if adv["skipped"]:
+            lines += [
+                f"| Adversarial attacks not launched | {adv['skipped']} "
+                "(indirect; poisoned corpus not loaded) |",
+            ]
     lines += [
         f"| Latency p50 (gated suites) | {_fmt_ms(s['p50_latency_ms'])} |",
         f"| Latency p95 (gated suites) | {_fmt_ms(s['p95_latency_ms'])} |",

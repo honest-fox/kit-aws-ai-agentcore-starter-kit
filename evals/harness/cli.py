@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import uuid
@@ -15,7 +16,8 @@ from . import config as cfg
 from .datasets import load_all, validate
 from .graders.judge import BedrockJudge, NullJudge
 from .invoke import RuntimeTransport
-from .report import render_json, render_markdown, split_suites, summarise
+from .report import (
+    CaseResult, render_json, render_markdown, split_suites, summarise)
 from .runner import run_all
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -33,6 +35,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="List the cases that would run, then exit.")
     p.add_argument("--stack", default=None, help="CloudFormation stack name.")
     p.add_argument("--region", default=None, help="AWS region.")
+    p.add_argument("--adversarial-corpus", action="store_true",
+                   default=os.environ.get("KIT_ADVERSARIAL_CORPUS") == "1",
+                   help="Declare that evals/corpus/adversarial/ has been "
+                        "loaded into the knowledge base. Without it, indirect "
+                        "injection cases are SKIPPED rather than counted as "
+                        "caught - they cannot land if the payload was never "
+                        "retrievable.")
     p.add_argument("--threshold", type=float, default=None,
                    help="Deterministic pass rate required to exit 0.")
     return p
@@ -160,13 +169,32 @@ def main(argv=None) -> int:
             boto3.client("bedrock-runtime", region_name=region,
                          config=Config(read_timeout=120, connect_timeout=15)))
 
+    # An indirect injection case cannot land if the payload was never in
+    # the knowledge base. Running it anyway would bank a trivial pass as a
+    # caught attack - and cost two live invocations to learn nothing.
+    to_run, skipped_cases = [], []
+    for c in cases:
+        if (not args.adversarial_corpus
+                and c.suite == "adversarial" and "indirect" in c.tags):
+            skipped_cases.append(c)
+        else:
+            to_run.append(c)
+    if skipped_cases:
+        print(f"Skipping {len(skipped_cases)} indirect adversarial case(s): "
+              "poisoned corpus not loaded (--adversarial-corpus to declare it)")
+
     run_id = uuid.uuid4().hex[:8]
-    print(f"Running {len(cases)} cases against {stack} in {region} (run {run_id})")
+    print(f"Running {len(to_run)} cases against {stack} in {region} (run {run_id})")
 
     def progress(result):
         print(f"  [{result.status:5}] {result.suite}/{result.case_id}")
 
-    results = run_all(cases, transport, judge, run_id, on_result=progress)
+    results = run_all(to_run, transport, judge, run_id, on_result=progress)
+    results += [
+        CaseResult(case_id=c.id, suite=c.suite, status="SKIPPED", tags=c.tags,
+                   error="indirect injection: poisoned corpus not loaded")
+        for c in skipped_cases
+    ]
 
     meta = {
         "model_id": target.runtime_arn.rsplit("/", 1)[-1],

@@ -89,7 +89,7 @@ def run_case(
                 # Keep verdicts already gathered: ERROR is excluded from the
                 # pass rate either way, and they are diagnostic evidence.
                 assertions=verdicts, judge_scores=judge_scores,
-                latency_ms=total_latency, error=str(exc),
+                latency_ms=total_latency, error=str(exc), tags=case.tags,
                 judge_attempted=judge_attempted, judge_scored=judge_scored,
             )
         total_latency += response.latency_ms
@@ -121,7 +121,7 @@ def run_case(
     return CaseResult(
         case_id=case.id, suite=case.suite, status=status,
         assertions=verdicts, judge_scores=judge_scores,
-        latency_ms=total_latency, error=None,
+        latency_ms=total_latency, error=None, tags=case.tags,
         judge_attempted=judge_attempted, judge_scored=judge_scored,
     )
 
