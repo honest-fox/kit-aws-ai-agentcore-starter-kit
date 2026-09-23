@@ -54,3 +54,36 @@ def test_json_round_trips_the_summary_and_cases():
     assert payload["summary"]["passed"] == 1
     assert payload["cases"][0]["case_id"] == "a"
     assert payload["meta"]["model_id"] == "m"
+
+
+def test_percentiles_use_nearest_rank_so_small_samples_are_honest():
+    # With 17 cases the 95th percentile genuinely is the slowest one.
+    results = [result(f"c{i}", "s", "PASS", latency=float(i)) for i in range(1, 18)]
+    s = summarise(results)
+    assert s["p95_latency_ms"] == 17.0
+    assert s["p50_latency_ms"] == 9.0
+
+
+def test_p95_does_not_overshoot_at_multiples_of_twenty():
+    # int(n*0.95) lands on an integer at n=100 and floors one rank too high.
+    results = [result(f"c{i}", "s", "PASS", latency=float(i)) for i in range(1, 101)]
+    assert summarise(results)["p95_latency_ms"] == 95.0
+
+
+def test_a_pipe_in_a_failure_detail_cannot_break_the_table():
+    # Reachable: a regex pattern with an alternation lands in the detail.
+    r = CaseResult(
+        case_id="a", suite="s", status="FAIL",
+        assertions=[Verdict(False, r"no match for /(?i)\b(5|five)[\s-]?year/")],
+    )
+    md = render_markdown([r], {"model_id": "m", "region": "r", "git_sha": "s"})
+    row = next(line for line in md.splitlines() if line.startswith("| `a`"))
+    assert row.count("|") - row.count("\\|") == 7   # 6 columns, 7 delimiters
+
+
+def test_latency_excludes_errored_cases_from_the_sample():
+    results = [
+        result("a", "s", "PASS", latency=10.0),
+        result("b", "s", "ERROR", latency=60000.0, error="timeout"),
+    ]
+    assert summarise(results)["p50_latency_ms"] == 10.0

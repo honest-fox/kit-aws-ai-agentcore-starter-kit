@@ -6,7 +6,7 @@ flakiness move the pass rate would make the gate untrustworthy.
 """
 from __future__ import annotations
 
-import statistics
+import math
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 
@@ -24,6 +24,31 @@ class CaseResult:
     error: str | None = None
 
 
+def _percentile(values: list[float], pct: float) -> float | None:
+    """Nearest-rank percentile.
+
+    With few samples this correctly collapses toward the maximum instead of
+    pretending to resolution the sample size cannot support: with 17 cases,
+    the 95th percentile genuinely is the slowest one.
+    """
+    if not values:
+        return None
+    ordered = sorted(values)
+    rank = math.ceil(pct * len(ordered))
+    return ordered[min(max(rank - 1, 0), len(ordered) - 1)]
+
+
+def _cell(text) -> str:
+    """Escape pipes so a detail cannot break the markdown table.
+
+    Reachable today: a regex assertion's pattern is interpolated into its
+    failure detail, and the grinder-warranty pattern contains an
+    alternation. The table would break only on failing rows - exactly the
+    rows a reader opens the scorecard to read.
+    """
+    return str(text).replace("|", "\\|")
+
+
 def summarise(results: list[CaseResult]) -> dict:
     passed = sum(1 for r in results if r.status == "PASS")
     failed = sum(1 for r in results if r.status == "FAIL")
@@ -36,11 +61,8 @@ def summarise(results: list[CaseResult]) -> dict:
         "failed": failed,
         "errored": errored,
         "pass_rate": (passed / graded) if graded else None,
-        "p50_latency_ms": statistics.median(latencies) if latencies else None,
-        "p95_latency_ms": (
-            sorted(latencies)[int(len(latencies) * 0.95)] if len(latencies) >= 20
-            else (max(latencies) if latencies else None)
-        ),
+        "p50_latency_ms": _percentile(latencies, 0.50),
+        "p95_latency_ms": _percentile(latencies, 0.95),
     }
 
 
@@ -88,7 +110,7 @@ def render_markdown(results: list[CaseResult], meta: dict) -> str:
             detail = "; ".join(v.detail for v in r.assertions if not v.passed) or "—"
         lines.append(
             f"| `{r.case_id}` | {r.suite} | {r.status} | "
-            f"{_fmt_ms(r.latency_ms)} | {judge} | {detail} |"
+            f"{_fmt_ms(r.latency_ms)} | {_cell(judge)} | {_cell(detail)} |"
         )
     lines.append("")
     lines.append(
@@ -103,8 +125,6 @@ def render_json(results: list[CaseResult], meta: dict) -> dict:
     return {
         "meta": {**meta, "generated_at": datetime.now(timezone.utc).isoformat()},
         "summary": summarise(results),
-        "cases": [
-            {**asdict(r), "assertions": [asdict(v) for v in r.assertions]}
-            for r in results
-        ],
+        # asdict() recurses into the nested Verdict list already.
+        "cases": [asdict(r) for r in results],
     }
