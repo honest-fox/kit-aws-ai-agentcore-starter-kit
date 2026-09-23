@@ -80,3 +80,20 @@ def test_validate_still_passes_when_cases_match(tmp_path, monkeypatch):
     cli = _datasets(tmp_path, monkeypatch, VALID_CASE)
     assert cli.main(["--validate"]) == 0
     assert cli.main(["--suite", "s", "--dry-run"]) == 0
+
+
+def test_gate_refuses_a_run_where_most_cases_never_executed():
+    # pass_rate is computed over passed+failed, so 16 ERROR + 1 PASS reads
+    # as 100%. A half-deployed stack produces exactly this shape.
+    results = [r("ERROR") for _ in range(16)] + [r("PASS")]
+    assert gate(results, threshold=0.9) == 1
+
+
+def test_gate_tolerates_a_single_transient_error():
+    results = [r("PASS") for _ in range(16)] + [r("ERROR")]
+    assert gate(results, threshold=0.9) == 0
+
+
+def test_error_ceiling_is_configurable():
+    results = [r("ERROR") for _ in range(16)] + [r("PASS")]
+    assert gate(results, threshold=0.9, max_error_rate=1.0) == 0

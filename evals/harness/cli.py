@@ -38,8 +38,24 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def gate(results, threshold: float) -> int:
+# A run where most cases never executed carries no signal, whatever the
+# survivors scored. 2 of 17 errors is already well past transient.
+DEFAULT_MAX_ERROR_RATE = 0.10
+
+
+def gate(results, threshold: float, max_error_rate: float = DEFAULT_MAX_ERROR_RATE) -> int:
     s = summarise(results)
+    total = s["total"]
+    if total and (s["errored"] / total) > max_error_rate:
+        # pass_rate is computed over passed+failed only - correctly, since an
+        # ERROR says nothing about quality. But that means 16 ERROR + 1 PASS
+        # reads as 100%. Scoring the survivors of a broken run and calling it
+        # green is how a gate earns being ignored.
+        print(f"FAILED: no usable signal - {s['errored']}/{total} cases errored "
+              f"(ceiling {max_error_rate:.0%}). Check the deployment, the "
+              "region, and Bedrock throttling before trusting any score.",
+              file=sys.stderr)
+        return 1
     if s["pass_rate"] is None:
         print("FAILED: every case errored - no quality signal at all.", file=sys.stderr)
         return 1
@@ -88,6 +104,14 @@ def main(argv=None) -> int:
     # "OK: 0 cases valid" and exit 0 - green having checked nothing, which
     # is the one failure mode an offline gate exists to prevent.
     if not cases:
+        print("No cases matched the filters.", file=sys.stderr)
+        return 2
+
+    filtered = bool(args.suite or args.case)
+
+    if not cases:
+        # Below the mode checks would let `--suite typo --validate` print
+        # "OK: 0 cases valid" and exit 0, having checked nothing.
         print("No cases matched the filters.", file=sys.stderr)
         return 2
 
@@ -157,10 +181,22 @@ def main(argv=None) -> int:
 
     results_dir = ROOT / "results"
     results_dir.mkdir(exist_ok=True)
-    (results_dir / "scorecard.md").write_text(render_markdown(results, meta))
-    (results_dir / "latest.json").write_text(
+    # A filtered run must never shadow the canonical scorecard: it is a
+    # committed artifact, and a partial one committed by accident would
+    # misrepresent the suite.
+    name = "scorecard-partial" if filtered else "scorecard"
+    (results_dir / f"{name}.md").write_text(render_markdown(results, meta))
+    (results_dir / f"{name.replace('scorecard', 'latest')}.json").write_text(
         json.dumps(render_json(results, meta), indent=2, default=str))
-    print(f"Scorecard written to {results_dir / 'scorecard.md'}")
+    print(f"Scorecard written to {results_dir / (name + '.md')}")
+
+    if filtered and args.threshold is None:
+        # One case yields a pass rate of exactly 0% or 100% against a 0.90
+        # threshold. Gating a partial run makes green meaningless, so refuse
+        # unless the caller sets a threshold deliberately.
+        print("NOT GATED: --suite/--case ran a partial suite. "
+              "Gate on the full suite, or pass --threshold to override.")
+        return 0
 
     return gate(results, threshold)
 
