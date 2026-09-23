@@ -12,15 +12,41 @@ from dataclasses import dataclass
 DEFAULT_STACK = "AgentCore-kit-default"
 DEFAULT_REGION = "ap-southeast-2"
 
-# Deliberately region-pinned rather than a cross-region inference profile.
-# AgentCore's built-in and default LLM-as-judge evaluators use cross-region
-# inference, which would widen the inference boundary Kit advertises. See
-# docs/evaluation.md.
-_JUDGE_MODELS = {
-    "ap-southeast-2": "anthropic.claude-sonnet-4-5-20250929-v1:0",
-    "us-west-2": "anthropic.claude-sonnet-4-5-20250929-v1:0",
-    "us-east-1": "anthropic.claude-sonnet-4-5-20250929-v1:0",
-}
+# The judge uses a GEOGRAPHY-SCOPED inference profile, matching what the
+# agent itself does. Verified live against ap-southeast-2 on 23 Sep 2026:
+#
+#   * Every Anthropic model in ap-southeast-2 reports INFERENCE_PROFILE as
+#     its only supported inference type. A bare model ID cannot be invoked
+#     on-demand there at all, so a single-region judge is impossible in
+#     Kit's home region via bedrock-runtime.
+#   * au.anthropic.claude-sonnet-4-5-20250929-v1:0 resolves to exactly two
+#     model ARNs - ap-southeast-2 (Sydney) and ap-southeast-4 (Melbourne).
+#     Nothing else. So "au." IS "inference stays in Australia".
+#
+# The meaningful distinction is therefore geography-scoped vs global, not
+# single-region vs cross-region. global.* is refused below because it would
+# widen the boundary Kit advertises without telling anyone.
+#
+# Deliberately a different model generation from the agent's default
+# (anthropic.claude-sonnet-5): a judge scoring its own model's output is
+# subject to self-preference bias.
+JUDGE_MODEL_NAME = "anthropic.claude-sonnet-4-5-20250929-v1:0"
+
+
+def _geography_prefix(region: str) -> str:
+    """Mirrors _geography_prefix in app/kit/model/load.py.
+
+    Duplicated rather than imported: the harness must not take a dependency
+    on code packaged into the agent container. A consistency test fails if
+    the two ever drift apart.
+    """
+    if region in ("ap-southeast-2", "ap-southeast-4"):
+        return "au"
+    if region.startswith("us-"):
+        return "us"
+    if region.startswith("eu-"):
+        return "eu"
+    return "global"
 
 DEFAULT_THRESHOLD = 0.90
 
@@ -36,10 +62,28 @@ class Target:
 
 
 def _find(outputs: dict, needle: str) -> str | None:
-    for key, value in outputs.items():
-        if needle.lower() in key.lower():
-            return value
-    return None
+    """Find one stack output by substring, refusing to guess when ambiguous.
+
+    The L3 construct emits aggregate back-compat outputs alongside the
+    per-resource ones: "MemoryId" matches both ApplicationMemoryKitMemoryId
+    Output and ApplicationMemoryIds, the latter being a comma-joined list
+    across every memory. With one memory the values coincide; with two the
+    aggregate is not a valid id. describe_stacks guarantees no ordering, so
+    picking the first match is a coin flip. Prefer explicit CfnOutput keys,
+    and raise rather than choose when still ambiguous.
+    """
+    matches = {k: v for k, v in outputs.items() if needle.lower() in k.lower()}
+    if len(matches) > 1:
+        explicit = {k: v for k, v in matches.items() if "output" in k.lower()}
+        if explicit:
+            matches = explicit
+    if not matches:
+        return None
+    if len(matches) > 1:
+        raise ValueError(
+            f"ambiguous stack output for {needle!r}: {sorted(matches)}. "
+            "Narrow the lookup rather than guessing.")
+    return next(iter(matches.values()))
 
 
 def resolve_target(stack: str, region: str, cfn_client) -> Target:
@@ -64,14 +108,23 @@ def resolve_target(stack: str, region: str, cfn_client) -> Target:
 
 
 def judge_model_id(region: str) -> str:
+    """The geography-scoped judge profile for a region.
+
+    Refuses to fall back to global.* silently: that would widen the
+    inference boundary Kit advertises. Set KIT_JUDGE_MODEL_ID to opt in
+    deliberately, or run with --no-judge.
+    """
     override = os.environ.get("KIT_JUDGE_MODEL_ID")
     if override:
         return override
-    if region not in _JUDGE_MODELS:
+    prefix = _geography_prefix(region)
+    if prefix == "global":
         raise ValueError(
-            f"no region-pinned judge model configured for {region}. "
-            "Set KIT_JUDGE_MODEL_ID explicitly, or run with --no-judge.")
-    return _JUDGE_MODELS[region]
+            f"no geography-scoped inference profile for {region}: the only "
+            "option there is global.*, which routes outside the geography. "
+            "Set KIT_JUDGE_MODEL_ID explicitly to accept that, or use "
+            "--no-judge.")
+    return f"{prefix}.{JUDGE_MODEL_NAME}"
 
 
 def threshold() -> float:
@@ -83,4 +136,9 @@ def stack_name() -> str:
 
 
 def region() -> str:
-    return os.environ.get("AWS_REGION", DEFAULT_REGION)
+    # CI runners commonly set only AWS_DEFAULT_REGION.
+    return (
+        os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+        or DEFAULT_REGION
+    )
