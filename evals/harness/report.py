@@ -22,6 +22,8 @@ class CaseResult:
     judge_scores: dict[str, float] = field(default_factory=dict)
     latency_ms: float = 0.0
     error: str | None = None
+    judge_attempted: int = 0
+    judge_scored: int = 0
 
 
 def _percentile(values: list[float], pct: float) -> float | None:
