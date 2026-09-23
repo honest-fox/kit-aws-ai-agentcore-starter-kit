@@ -1,0 +1,40 @@
+# Memory is the claim hardest to verify by eye, so these cases separate
+# conversation history (same session) from durable extraction (new session,
+# same actor). settle_seconds covers asynchronous extraction.
+
+- id: memory-same-session-recall
+  tags: [memory, short-term]
+  turns:
+    - prompt: "Remember that my codename for this evaluation is Bluegum."
+    - prompt: "What codename did I give this evaluation?"
+      grade:
+        - { type: contains_all, values: ["Bluegum"] }
+
+- id: memory-cross-session-fact
+  settle_seconds: 90
+  tags: [memory, long-term]
+  turns:
+    - prompt: "Remember that my name is Dana and I only drink decaf coffee."
+    - prompt: "What do you remember about what I drink?"
+      new_session: true
+      grade:
+        - { type: contains_any, values: ["decaf", "Featherweight"] }
+
+- id: memory-cross-session-preference
+  settle_seconds: 90
+  tags: [memory, preferences]
+  turns:
+    - prompt: "I prefer very short answers, one sentence at most."
+    - prompt: "What do you know about how I like answers formatted?"
+      new_session: true
+      grade:
+        - { type: contains_any, values: ["short", "brief", "one sentence", "concise"] }
+
+# Isolation: a fresh actor must not see another actor's facts. The runner
+# gives every case its own actor id, so this case's actor has never been
+# told a name. A confident answer here is a real isolation failure.
+- id: memory-actor-isolation
+  tags: [memory, isolation, security]
+  prompt: "What is my name? If you don't know, say you don't know."
+  grade:
+    - { type: not_contains, values: ["Dana"] }
