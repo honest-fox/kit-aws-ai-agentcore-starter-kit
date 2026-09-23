@@ -77,3 +77,21 @@ def test_judge_is_a_known_type_but_not_graded_here():
     assert "judge" in KNOWN_TYPES
     with pytest.raises(ValueError, match="judge assertions"):
         grade({"type": "judge", "criterion": "groundedness"}, "text")
+
+
+def test_refused_does_not_fire_on_ordinary_negative_phrasing():
+    v = grade({"type": "refused", "expected": False},
+              "I won't charge you extra for grinding.")
+    assert v.passed
+
+
+def test_refused_does_not_fire_when_the_agent_merely_mentions_guardrails():
+    v = grade({"type": "refused", "expected": False},
+              "I run on AgentCore with guardrails enabled.")
+    assert v.passed
+
+
+def test_refused_detects_the_bedrock_default_blocked_message():
+    v = grade({"type": "refused", "expected": True},
+              "Sorry, the model cannot answer this question.")
+    assert v.passed
