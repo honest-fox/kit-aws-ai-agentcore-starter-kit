@@ -103,3 +103,19 @@ def test_online_evals_reference_declared_evaluators():
     for c in load()["onlineEvalConfigs"]:
         for ref in c.get("evaluators", []):
             assert ref in declared, f"{c['name']} references unknown {ref}"
+
+
+def test_groundedness_instructions_are_verbatim_from_the_harness():
+    """judge.py promises the offline and online layers score against the
+    same words. Pinning only the untrusted clause would not catch a
+    reworded criterion body, which is the more likely drift."""
+    import json
+    from pathlib import Path
+    from harness.graders.judge import CRITERIA, UNTRUSTED_CLAUSE
+
+    config = json.loads(
+        (Path(__file__).resolve().parents[2] / "agentcore" / "agentcore.json").read_text())
+    deployed = next(e for e in config["evaluators"] if e["name"] == "KitGroundedness")
+    expected = (CRITERIA["groundedness"]["instructions"] + UNTRUSTED_CLAUSE
+                + " Context: {context}. Response to evaluate: {assistant_turn}")
+    assert deployed["config"]["llmAsAJudge"]["instructions"] == expected
