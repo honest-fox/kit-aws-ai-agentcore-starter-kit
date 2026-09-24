@@ -254,18 +254,19 @@ change made it worse:
 
 That runs a golden set over the sample Kookaburra corpus, writes
 `evals/results/scorecard.md`, and exits non-zero if the deterministic pass
-rate drops below the threshold. Roughly 23 agent invocations and 12 judge
-calls, a few minutes end to end — about three of which are deliberate
-sleeping, while asynchronous memory extraction settles before the
-cross-session cases read it back.
+rate drops below the threshold. Roughly 23 agent invocations, a few minutes
+end to end — about three of which are deliberate sleeping, while
+asynchronous memory extraction settles before the cross-session cases read
+it back.
 
-Two things worth knowing before you read the output. Only the deterministic
-assertions gate: the LLM judge's scores are reported as a trend and never
-break the build, because an LLM-judged gate moves when nothing in your agent
-moved. And the adversarial row reports a **catch rate over attacks actually
-launched** — indirect injection cases are skipped unless you deliberately
-load the poisoned corpus, because an attack that was never launched is not
-an attack that was caught.
+Two things worth knowing before you read the output. The harness grades
+only with deterministic assertions, and only those gate: an LLM-judged gate
+moves when nothing in your agent moved, so judged quality is left to the
+managed evaluators declared in `agentcore.json`, which ship disabled. And
+the adversarial row reports a **catch rate over attacks actually launched**
+— indirect injection cases are skipped unless you deliberately load the
+poisoned corpus, because an attack that was never launched is not an attack
+that was caught.
 
 No AWS credentials? `./scripts/eval.sh --validate` checks the datasets
 offline and touches nothing.
@@ -312,7 +313,7 @@ prices move — check your bill):
 | AgentCore runtime + memory + tools | per-use consumption | cents to low dollars |
 | S3 Vectors, S3, Lambda, API Gateway | tiny at trial volume | cents |
 | CodeBuild | container builds on deploy | cents per deploy |
-| A full `./scripts/eval.sh` run | ~23 agent invocations + 12 judge calls | cents; `--no-judge` drops the judge calls |
+| A full `./scripts/eval.sh` run | ~23 agent invocations, no scoring calls | cents |
 
 There are **no always-on charges** in the default deployment — no
 provisioned OpenSearch, no idle EC2. If nobody talks to the agent, the

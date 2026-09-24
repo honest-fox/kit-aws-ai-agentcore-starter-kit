@@ -12,47 +12,131 @@ invoking the agent you just deployed.
 ```bash
 ./scripts/eval.sh              # full suite against your deployed stack
 ./scripts/eval.sh --validate   # offline dataset check, no AWS needed
-./scripts/eval.sh --no-judge   # deterministic assertions only, no judge spend
+./scripts/eval.sh --dry-run    # list the cases that would run
 ```
 
 Exit codes: `0` the gate passed, `1` the gate failed, `2` a configuration
 or dataset error.
 
-## Two grading tiers, and only one of them gates
+## One grading tier here, and one somewhere else
 
-Every case is graded twice over, by two mechanisms with very different
-properties.
+Every case in the golden set is graded by **deterministic assertions** —
+`contains_all`, `contains_any`, `not_contains`, `regex`, `numeric`,
+`refused`. They are free, instant, and reproducible: the same response in
+gives the same verdict out, every time. They are the only thing this
+harness scores, and the only thing CI gates on.
 
-**Deterministic assertions** — `contains_all`, `contains_any`,
-`not_contains`, `regex`, `numeric`, `refused`. They are free, instant, and
-reproducible: the same response in gives the same verdict out, every time.
-They are the **only** thing CI gates on.
+Judged quality — groundedness, tool selection, refusal proportionality — is
+scored somewhere else entirely: by three custom evaluators declared in
+`agentcore/agentcore.json` and operated by AWS against real traffic. This
+harness runs no judge of its own. It used to, and
+[what we removed, and why](#what-we-removed-and-why) is the most useful
+section of this document.
 
-**The LLM judge** — a 1–5 quality score on `groundedness` or
-`helpfulness`. It catches what a substring cannot: an answer that quotes
-the right price and then invents a provenance for it. It is reported as a
-trend and **never** gated.
-
-The reason for the split is not philosophical. An LLM-judged gate moves
-when nothing in the agent has moved — the judge's own model updates, it
-scores 3.8 instead of 4.1, and the build goes red on a commit that changed
-a comment. A gate that fails for reasons the author cannot act on is a gate
-the team learns to re-run until it goes green, which is worse than having
-no gate at all.
+The reason the gate is deterministic-only is not philosophical. An
+LLM-judged gate moves when nothing in the agent has moved — the scoring
+model updates, it scores 3.8 instead of 4.1, and the build goes red on a
+commit that changed a comment. A gate that fails for reasons the author
+cannot act on is a gate the team learns to re-run until it goes green,
+which is worse than having no gate at all.
 
 The harness enforces this structurally rather than by convention. A case
-with only judge assertions and no deterministic ones is rejected offline by
-`validate()`:
+that asserts nothing is rejected offline by `validate()`:
 
 ```
-retrieval-example: no deterministic assertions. Judge scores are
-reported, never gated, so this case could never fail.
+retrieval-example: no assertions on any turn
 ```
 
 `all([])` is `True`, so such a case would be marked PASS unconditionally,
 whatever the agent said, and would quietly inflate the pass rate that gates
-CI. Judge scores never touch a case's PASS/FAIL status, and the gate reads
-status only.
+CI.
+
+## What we removed, and why
+
+Kit 0.2 was built with a second grading tier: an LLM-as-a-judge implemented
+in Python, in this repository, scoring each answer 1–5 for groundedness or
+helpfulness. It has been deleted. The reasoning is worth more than the code
+was.
+
+**It duplicated a managed service.** AgentCore ships built-in evaluators —
+`Faithfulness`, `Correctness`, `Refusal`, `ToolSelectionAccuracy`,
+`GoalSuccessRate` and others, across session, trace and tool-call levels —
+and supports declarative custom LLM-as-a-judge evaluators on top of them.
+Kit already declares three of those custom evaluators in
+`agentcore/agentcore.json`. AWS operates them, they are pinned to the `au.`
+geography profile, and `KitQualityMonitor` scores real traffic with them.
+A second judge, written in Python and scoring the same dimensions, was a
+reimplementation of something the project had already declared.
+
+**Hardening it was work that only existed because it was hand-built.**
+Prompt-injection defence in the judge's own prompt; provider lock-in
+(`invoke_model` versus `converse`, because the model id was an
+unconstrained environment variable); tolerating markdown fences around the
+model's JSON; reporting judge coverage so that a silently failing judge did
+not read as a tidy column of dashes. None of that is agent-quality work. It
+is evaluation-service plumbing, and in the managed design it is AWS's
+problem rather than this repository's.
+
+**It was never validated.** The one measurement that would have justified
+keeping it — how far its scores agreed with human judgement on Kit's own
+corpus — was never taken. A hand-built, hand-hardened judge of unmeasured
+accuracy is not a better instrument than a managed one. It is a comparable
+instrument with considerably more of this repository attached to it.
+
+**It never gated anything anyway.** Judge scores were reported as a trend
+and never allowed to fail a build. That was the right call, for the reason
+in the previous section — but it also means removing them cost the gate
+nothing. Not one number that CI enforces has changed.
+
+### What justified building a harness at all
+
+The deterministic tier, and only the deterministic tier.
+
+Exact-value assertions are a different kind of instrument from a judge. Is
+the answer *actually* `$19.50`? `45` days? `5–8` business days? That
+question has a byte-reproducible answer, costs nothing to ask, returns
+instantly, and needs no CloudWatch Transaction Search and no trace
+ingestion — only the ability to invoke the agent. Run it twice against the
+same response and it returns the same verdict twice.
+
+The built-in evaluators cannot do that, by construction. They score 0–1 by
+LLM judgement — including `Correctness`, even when it is given ground
+truth. So a gate built on built-ins alone is an **LLM-judged gate**: it
+drifts with the scoring model, and a build can go red on a commit that
+changed nothing. That is precisely the failure mode this document argues
+against, and it is the whole reason the harness exists.
+
+The division of labour is not "local good, managed bad":
+
+| | This harness | The managed evaluators |
+|---|---|---|
+| Asks | did it say the right thing? | was the answer any good? |
+| Answers | an exact, reproducible verdict | a score, which drifts |
+| Costs | nothing beyond the agent invocation | per-scored-trace LLM spend |
+| Needs | a deployed runtime | a deployed runtime **and** Transaction Search |
+| Gates CI | **yes** | no |
+
+**When to hand-build one.** When you have facts with exact answers and you
+want a gate that goes red only when something actually broke. That is a
+small, boring, valuable piece of software, and nobody can write it for you,
+because only you know that a 250g bag is $19.50.
+
+**When not to.** Everything else. Groundedness, helpfulness, tone, refusal
+proportionality — anything whose honest output is a score rather than a
+verdict. That is a managed evaluator's job. A good early warning: if you
+are writing prompt-injection defences into your own judge prompt, you have
+stopped evaluating your agent and started operating an evaluation service.
+
+The same reasoning applies to the managed **dataset runner**. The AgentCore
+SDK ships `bedrock_agentcore.evaluation.OnDemandEvaluationDatasetRunner`,
+and `agentcore run eval --dataset` is the CLI face of it: run a dataset of
+scenarios against a runtime and score the results with managed evaluators.
+Kit does not use it *for the gate* — the gate has to be free, reproducible,
+and able to pass on a fork's pull request with no AWS account attached, and
+Kit is a teaching artefact where a reader should be able to open
+`harness/graders/deterministic.py` and see the entire scoring path on one
+screen. For anything judged, the managed runner is the better tool. Moving
+to it is a reasonable choice, not one Kit argues against.
 
 ## What the golden set covers
 
@@ -105,11 +189,15 @@ Three status values that are often collapsed and must not be:
 - **SKIPPED** — the case was deliberately not run. Today this only happens
   to indirect adversarial cases without the poisoned corpus loaded.
 
-The **judge coverage** row exists because a judge that silently returns
-nothing looks identical to one that was never run: a column of dashes, CI
-green, nobody alarmed. Coverage states `12/12 scored`, or
-`7/12 scored  **judge degraded**`, so a reader can tell "scored 3.9" from
-"scored nothing".
+There is no quality score anywhere on the scorecard, and that is not an
+omission. Every column is a deterministic verdict, a latency, or the
+adversarial catch rate. The footnote says as much, so that a reader who
+expects a 1–5 number is told where it lives rather than left to assume it
+was forgotten:
+
+> Adversarial catch rates are reported, never gated. Only the deterministic
+> pass rate gates CI. Judged quality is scored by the managed evaluators in
+> agentcore.json, not here.
 
 ## What actually fails the gate
 
@@ -132,8 +220,12 @@ earns being ignored.
 **2. No signal at all.** If every case errored, there is no pass rate to
 compare and the gate fails rather than dividing by zero into a default.
 
-**3. Pass rate below threshold.** Default **0.90**, overridable with
-`--threshold` or `KIT_EVAL_THRESHOLD`.
+**3. Pass rate below threshold.** Default **0.94**
+(`DEFAULT_THRESHOLD` in `harness/config.py`), overridable with
+`--threshold` or `KIT_EVAL_THRESHOLD`. It is set from observed performance
+rather than aspiration: against 17 gated cases it leaves exactly one case
+of headroom, so a single flaky turn reports without breaking the build,
+while two failures still fail.
 
 ### Filtered runs do not gate
 
@@ -150,7 +242,7 @@ NOT GATED: --suite/--case ran a partial suite. Gate on the full suite,
 or pass --threshold to override.
 ```
 
-One case yields a pass rate of exactly 0% or 100% against a 0.90 threshold.
+One case yields a pass rate of exactly 0% or 100% against a 0.94 threshold.
 Gating that makes green meaningless. Pass `--threshold` if you want a
 filtered run gated anyway — the point is that it has to be deliberate.
 
@@ -159,24 +251,24 @@ A mistyped `--suite` exits 2, including under `--validate`. `--suite typo
 checked nothing — is the one failure mode an offline gate exists to
 prevent.
 
-## Where the judge runs, and why that matters
+## Where the judged scoring runs, and why that matters
 
-Kit's headline claim is that inference stays in Australia. Adding a judge
-means adding a second model call, and a judge that quietly routed
-elsewhere would break that claim without anyone noticing. So the judge
-uses a **geography-scoped inference profile**, the same mechanism the agent
-itself uses:
+Kit's headline claim is that inference stays in Australia. Scoring an
+answer means a second model call, and an evaluator that quietly routed
+elsewhere would break that claim without anyone noticing. So each of the
+three evaluators in `agentcore/agentcore.json` pins a **geography-scoped
+inference profile**, the same mechanism the agent itself uses:
 
-```
-au.anthropic.claude-sonnet-4-5-20250929-v1:0
+```json
+"model": "au.anthropic.claude-sonnet-4-5-20250929-v1:0"
 ```
 
 Here is the part that is easy to get wrong. Every Anthropic model in
 `ap-southeast-2` reports `INFERENCE_PROFILE` as its only supported
 inference type — a bare model ID cannot be invoked on demand there at all.
-So a *single-region* judge is impossible in Kit's home region, and it is
-tempting to conclude that any inference profile means "your data leaves the
-country".
+So a *single-region* evaluator is impossible in Kit's home region, and it
+is tempting to conclude that any inference profile means "your data leaves
+the country".
 
 It does not. Check it yourself, in about thirty seconds:
 
@@ -194,31 +286,24 @@ and ap-southeast-4."* Both are Australian regions, so `au.` **is**
 
 The meaningful distinction is therefore **geography-scoped versus
 `global.`**, not single-region versus cross-region. `global.*` routes
-outside the geography, so the harness refuses to fall back to it silently:
+outside the geography.
 
-```
-no geography-scoped inference profile for <region>: the only option there
-is global.*, which routes outside the geography. Set KIT_JUDGE_MODEL_ID
-explicitly to accept that, or use --no-judge.
-```
+Because the profile is declared in `agentcore.json` rather than resolved at
+runtime, there is no silent fallback available to widen the boundary: the
+only way judged scoring leaves the geography is by editing that string,
+which appears in a diff and goes through review. Deploying Kit somewhere
+with no scoped profile means changing that line deliberately.
+`evals/tests/test_agentcore_config.py` asserts offline that no evaluator's
+model starts with `global.`, so the change cannot land unnoticed.
 
-In a region with no scoped profile you get that error rather than a
-silently widened boundary. Set `KIT_JUDGE_MODEL_ID` to opt in deliberately,
-or run `--no-judge`.
+### A different model generation on purpose
 
-### The judge is a different model generation on purpose
-
-The agent defaults to Claude Sonnet 5. The judge is Claude Sonnet 4.5. That
+The agent defaults to Claude Sonnet 5 (`DEFAULT_MODEL_NAME` in
+`app/kit/model/load.py`). The evaluators score with Claude Sonnet 4.5. That
 is not an oversight or a cost optimisation — a model scoring its own
 generation's output is subject to self-preference bias, and a groundedness
 score that is partly a measure of stylistic self-recognition is not a
 groundedness score.
-
-The judge also calls Bedrock's `converse` API rather than `invoke_model`,
-because `KIT_JUDGE_MODEL_ID` is an unconstrained environment variable: point
-it at a Nova or Llama profile and a hard-coded Anthropic body schema fails
-twice over, on request shape and response envelope, with both failures
-swallowed into a blank scorecard.
 
 ## The adversarial suite
 
@@ -290,7 +375,7 @@ Two things do not need a deployed stack at all:
 ```bash
 ./scripts/eval.sh --validate   # dataset structure, criteria names, regex validity
 ./scripts/eval.sh --dry-run    # list the cases that would run
-cd evals && uv run --extra dev pytest -q    # 144 harness unit tests
+cd evals && uv run --extra dev pytest -q    # 113 harness unit tests
 ```
 
 None of them makes an AWS call. `--validate` and `--dry-run` do not even
@@ -322,10 +407,16 @@ declares three managed evaluators:
 | `KitToolSelection` | `TOOL_CALL` | Whether the right tool was chosen, and whether one was needed at all |
 | `KitRefusalQuality` | `TRACE` | Proportionate refusal — declining harm *and* not refusing ordinary questions |
 
-Their instructions and rating scales are the same source text as the
-offline judge's `CRITERIA`, including the untrusted-data clause, so the
-offline and online layers score against the same words rather than
-drifting apart.
+Their instruction text now lives only in `agentcore.json` — there is no
+second copy in the harness to drift from — and it is the copy that matters,
+because these evaluators read real user traffic.
+`evals/tests/test_agentcore_config.py` pins it offline: the untrusted-data
+clause that tells the evaluator its input is data rather than instructions,
+the placeholders each level permits, and the geography-scoped model.
+`agentcore validate` checks names and cross-resource references but not
+instruction strings, so those assertions are the only thing standing
+between an edit and a deployed evaluator that has quietly lost its
+injection defence.
 
 They are wired to an online eval config, `KitQualityMonitor`, at a 5%
 sampling rate (`samplingRate` is a percentage — the schema allows 0.01 to
@@ -424,19 +515,16 @@ failure mode that hides a broken quality gate for months.
 
 ## What a run costs
 
-A default full run makes:
+A default full run makes **23 agent invocations** — 25 turns across the
+suite, minus the two indirect adversarial cases skipped without the
+poisoned corpus. Retries on transport failure can add a few more. Plus
+about three minutes of deliberate sleeping in the memory suite, waiting for
+asynchronous extraction.
 
-- **23 agent invocations** — 25 turns across the suite, minus the two
-  indirect adversarial cases skipped without the corpus. Retries on
-  transport failure can add a few more.
-- **12 judge calls** — 11 `groundedness`, 1 `helpfulness`.
-
-Plus about three minutes of deliberate sleeping in the memory suite waiting
-for asynchronous extraction.
-
-`--no-judge` removes the 12 judge calls entirely and still gates: the
-deterministic tier is the only thing the gate reads, so a `--no-judge` run
-is a complete gate run with no quality trend attached.
+That is the entire bill. There are **no scoring calls**: grading is string
+and number comparison in the harness process. Judged scoring costs money
+only if you enable `KitQualityMonitor`, which is a separate decision with a
+separate switch — see above.
 
 We are not going to print a dollar figure that goes stale. It is two dozen
 Sonnet conversations against a small corpus — run it once and read your own
@@ -455,38 +543,25 @@ cancelled workflow, an expired OIDC session: each of those orphans a
 deployed stack with nothing left watching it. A budget alarm is the only
 mechanism in this list that still works when GitHub Actions isn't running.
 
-## Why Kit does not use the managed dataset runner
+## How the two layers divide the work
 
-The AgentCore SDK ships
-`bedrock_agentcore.evaluation.OnDemandEvaluationDatasetRunner`, which does
-this shape of work — run a dataset of scenarios against a runtime and score
-the results with managed evaluators. `agentcore run eval --dataset` is the
-CLI face of the same idea. Kit uses neither for its gate, and the choice is
-deliberate rather than an oversight:
-
-- **The gate needs to be free, instant and reproducible.** A managed
-  LLM-scored run is none of those, and Kit's gate has to pass on a fork's
-  pull request with no AWS account attached.
-- **Kit is a teaching artefact.** A reader should be able to open
-  `harness/graders/deterministic.py` and see the entire scoring path in one
-  screen. "Trust the managed scorer" is exactly the kind of claim this
-  repository exists to avoid making.
-
-Kit does use the managed layer where it fits: `agentcore run eval` runs
-against the live tier's traces as a reported, non-gating step, and the
-online evaluators score real traffic. The offline harness gates; the
-managed layer observes.
-
-If your situation is different — you want scale, you do not want to
-maintain a harness, you would rather use AWS's evaluators than write your
-own — the managed runner is a reasonable thing to move to. Kit's choice is
-not a recommendation against it.
+Kit uses the managed layer where it fits. `agentcore run eval` runs against
+the live tier's traces as a reported, non-gating step, and the declared
+evaluators score real traffic through `KitQualityMonitor`. The offline
+harness gates; the managed layer observes. Neither one is asked to do the
+other's job — which is the whole content of
+[what we removed, and why](#what-we-removed-and-why).
 
 ## What this does not tell you
 
-- **Judge scores are not reproducible run to run.** `temperature` is 0,
-  which is not the same as deterministic. Treat the score as a trend across
-  many runs, never as a threshold on one.
+- **It reports no quality score at all.** The harness tells you whether
+  the agent said the right things, not whether it said them well, and no
+  `./scripts/eval.sh` run will ever tell you the latter. Judged quality
+  comes from the managed evaluators in `agentcore.json`, which are
+  **disabled on create** and, once enabled, score sampled live traffic in
+  CloudWatch — a separate surface, on a different population, on your
+  deliberate say-so. Read those scores as a trend across many traces rather
+  than a threshold on one.
 - **22 cases is a smoke test, not a benchmark.** It catches "retrieval
   broke", "memory stopped persisting", "the agent started refusing ordinary
   questions". It does not characterise quality.

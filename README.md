@@ -80,11 +80,12 @@ agentcore invoke "What's Kookaburra Coffee's return policy on equipment?"
 
 Deterministic assertions (prices, policy numbers, memory recall across
 sessions) are free, reproducible, and the only thing the quality gate
-reads. An LLM judge adds a 1–5 quality score that is reported as a trend
-and never gated. A five-case adversarial suite is reported too, never
-gated. **[docs/evaluation.md](docs/evaluation.md)** covers the scorecard,
-the two CI tiers, where the judge runs, and what the numbers do not tell
-you.
+reads. A five-case adversarial suite is reported too, never gated. Judged
+quality — groundedness, tool selection, refusal proportionality — is left
+to the managed evaluators declared in `agentcore.json`, which ship
+disabled. **[docs/evaluation.md](docs/evaluation.md)** covers the
+scorecard, the two CI tiers, why the harness runs no judge of its own, and
+what the numbers do not tell you.
 
 ### Call the API
 

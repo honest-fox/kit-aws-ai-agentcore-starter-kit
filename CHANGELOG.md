@@ -17,19 +17,14 @@ would notice if it stopped being.
   the `sample-data/` corpus so a pass proves retrieval actually ran.
   Datasets are YAML in `evals/datasets/`, meant to be rewritten for your
   own corpus.
-- **Two grading tiers.** Deterministic assertions — `contains_all`,
-  `contains_any`, `not_contains`, `regex`, `numeric`, `refused` — are
-  free, instant and reproducible, and are the only thing CI gates on. An
-  LLM judge adds a 1–5 `groundedness` / `helpfulness` score, reported as a
-  trend and never gated. A judge-only case is rejected offline, because
-  `all([])` is `True` and such a case could never fail.
-- **Geography-scoped judge.** The judge runs on
-  `au.anthropic.claude-sonnet-4-5-20250929-v1:0` in Australian regions —
-  a profile that resolves to `ap-southeast-2` and `ap-southeast-4` and
-  nothing else. It refuses to fall back to `global.*` silently; set
-  `KIT_JUDGE_MODEL_ID` to widen the boundary deliberately, or use
-  `--no-judge`. Deliberately a different model generation from the agent's
-  default, so a judge is not scoring its own model's output.
+- **Deterministic grading, and nothing else locally.** `contains_all`,
+  `contains_any`, `not_contains`, `regex`, `numeric`, `refused` — free,
+  instant and reproducible, and the only thing CI gates on. A case that
+  asserts nothing is rejected offline, because `all([])` is `True` and such
+  a case could never fail. The harness runs no LLM judge of its own:
+  judged quality is scored by the managed evaluators below, which is what a
+  managed evaluation service is for. `docs/evaluation.md` sets out the
+  reasoning, and when hand-building a harness is and is not worth it.
 - **Adversarial suite** — five cases, reported and never gated. Direct
   attacks (instruction override, system-prompt exfiltration, roleplay
   jailbreak) run against any deployment. Indirect, retrieved-document
@@ -43,17 +38,26 @@ would notice if it stopped being.
   and 1 PASS as 100%. Filtered `--suite` / `--case` runs write
   `scorecard-partial.md` and exit 0 with `NOT GATED` unless `--threshold`
   is passed deliberately.
-- **Continuous evaluation** — three managed evaluators (`KitGroundedness`,
-  `KitToolSelection`, `KitRefusalQuality`) sharing their instruction text
-  with the offline judge, wired to `KitQualityMonitor` at 5% sampling.
-  Ships with `enableOnCreate: false`, so deploying Kit never starts
-  evaluation spend; `agentcore resume online-eval KitQualityMonitor`
-  starts it and `agentcore pause` stops it, with no redeploy.
+- **Continuous evaluation** — three declarative LLM-as-a-judge evaluators
+  (`KitGroundedness`, `KitToolSelection`, `KitRefusalQuality`), operated by
+  AWS and wired to `KitQualityMonitor` at 5% sampling. Each pins
+  `au.anthropic.claude-sonnet-4-5-20250929-v1:0`, a profile that resolves
+  to `ap-southeast-2` and `ap-southeast-4` and nothing else, so judged
+  scoring stays in-geography; deliberately a different model generation
+  from the agent's default, so nothing scores its own output. Ships with
+  `enableOnCreate: false`, so deploying Kit never starts evaluation spend;
+  `agentcore resume online-eval KitQualityMonitor` starts it and
+  `agentcore pause` stops it, with no redeploy.
+- **Their instruction text is pinned offline.**
+  `evals/tests/test_agentcore_config.py` asserts the untrusted-data clause,
+  the placeholders each evaluator level permits, the non-`global.` model,
+  and that no online eval enables itself on create — `agentcore validate`
+  checks names and references, but not instruction strings.
 
 ### Continuous integration
 
 - **Tier 1, `evals (offline)`** — every pull request including forks, plus
-  pushes to `main`. No AWS credentials and no AWS calls: 144 harness unit
+  pushes to `main`. No AWS credentials and no AWS calls: 113 harness unit
   tests, dataset validation, `agentcore validate`. The AgentCore CLI is
   pinned so a CLI release cannot turn every fork's pull request red.
 - **Tier 2, `evals (live)`** — merge to `main` and manual dispatch, and
@@ -74,10 +78,10 @@ would notice if it stopped being.
 ### Enablement
 
 - `./scripts/eval.sh` — one entry point, with `--validate`, `--dry-run`,
-  `--no-judge`, `--suite`, `--case`, `--threshold` and
-  `--adversarial-corpus`
-- `docs/evaluation.md` — the full guide: the two tiers, reading the
-  scorecard, where the judge runs and how to verify it yourself, the
+  `--suite`, `--case`, `--threshold` and `--adversarial-corpus`
+- `docs/evaluation.md` — the full guide: what the harness grades and what
+  it deliberately leaves to the managed evaluators, reading the scorecard,
+  where judged scoring runs and how to verify the geography yourself, the
   adversarial opt-in, cost, and what the numbers do not tell you
 - `scripts/preflight.sh` now checks CloudWatch Transaction Search, as a
   **warning**: managed evaluators and `agentcore run eval` need trace
@@ -85,11 +89,11 @@ would notice if it stopped being.
 
 ### Verified
 
-- 144 harness unit tests pass; the `--validate` path imports no AWS module
+- 113 harness unit tests pass; the `--validate` path imports no AWS module
   at all, confirmed by inspecting `sys.modules` after a run.
-- The `au.` judge profile resolves to exactly two model ARNs, both
-  Australian (`aws bedrock get-inference-profile`, ap-southeast-2,
-  23 Sep 2026).
+- The `au.` inference profile the evaluators pin resolves to exactly two
+  model ARNs, both Australian (`aws bedrock get-inference-profile`,
+  ap-southeast-2, 23 Sep 2026).
 - `agentcore validate` passes; `./scripts/eval.sh --validate` reports
   22 cases valid.
 - There is no `agentcore destroy` subcommand in CLI 0.28.1 — teardown goes
@@ -109,9 +113,14 @@ would notice if it stopped being.
   `agentcore deploy`; loading it is a manual step into a throwaway
   knowledge base. Until then those cases are SKIPPED and the suite measures
   direct attacks only.
-- **Judge scores are not deterministic run to run.** `temperature` is 0,
-  which is not the same as reproducible. The score is a trend across many
-  runs, never a threshold on one — which is why nothing gates on it.
+- **A default run reports no judged quality at all.** The harness grades
+  deterministically and nothing else; judged quality comes from the managed
+  evaluators in `agentcore.json`, and those ship **disabled**
+  (`enableOnCreate: false`) and score sampled live traffic once enabled,
+  not this run. So `./scripts/eval.sh` tells you whether the agent said the
+  right things, never whether it said them well. And an LLM-judged score is
+  a trend across many traces, never a threshold on one — which is why
+  nothing gates on it.
 - **The live CI tier needs two repository secrets** —
   `KIT_EVAL_ROLE_ARN` and `KIT_EVAL_ACCOUNT_ID` — that forks will not have.
   It skips quietly on a fork rather than going permanently red, so a fork
