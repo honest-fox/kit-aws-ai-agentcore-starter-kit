@@ -4,6 +4,128 @@ All notable changes to Kit are documented here. Kit follows
 [Semantic Versioning](https://semver.org/): while the version is `0.x`,
 the deployed resource shape may change between minor versions.
 
+## [0.2.0] — 2026-09-XX
+
+An evaluation harness. Kit 0.1 let you deploy an agent and see it work;
+0.2 answers the next question — whether it is any good, and whether you
+would notice if it stopped being.
+
+### The stack
+
+- **Golden set** — 22 cases across four suites (retrieval, memory, tools,
+  adversarial), 25 conversational turns, every expected answer grounded in
+  the `sample-data/` corpus so a pass proves retrieval actually ran.
+  Datasets are YAML in `evals/datasets/`, meant to be rewritten for your
+  own corpus.
+- **Two grading tiers.** Deterministic assertions — `contains_all`,
+  `contains_any`, `not_contains`, `regex`, `numeric`, `refused` — are
+  free, instant and reproducible, and are the only thing CI gates on. An
+  LLM judge adds a 1–5 `groundedness` / `helpfulness` score, reported as a
+  trend and never gated. A judge-only case is rejected offline, because
+  `all([])` is `True` and such a case could never fail.
+- **Geography-scoped judge.** The judge runs on
+  `au.anthropic.claude-sonnet-4-5-20250929-v1:0` in Australian regions —
+  a profile that resolves to `ap-southeast-2` and `ap-southeast-4` and
+  nothing else. It refuses to fall back to `global.*` silently; set
+  `KIT_JUDGE_MODEL_ID` to widen the boundary deliberately, or use
+  `--no-judge`. Deliberately a different model generation from the agent's
+  default, so a judge is not scoring its own model's output.
+- **Adversarial suite** — five cases, reported and never gated. Direct
+  attacks (instruction override, system-prompt exfiltration, roleplay
+  jailbreak) run against any deployment. Indirect, retrieved-document
+  injection needs `evals/corpus/adversarial/` loaded into a throwaway
+  knowledge base and declared with `--adversarial-corpus`; without it
+  those cases are SKIPPED rather than counted as caught, and the catch-rate
+  denominator counts only attacks actually launched.
+- **A gate that refuses runs with no signal.** Pass rate is computed over
+  passed + failed only, so ERROR cannot move it — and the gate separately
+  fails when more than 10% of cases errored, rather than reading 16 ERROR
+  and 1 PASS as 100%. Filtered `--suite` / `--case` runs write
+  `scorecard-partial.md` and exit 0 with `NOT GATED` unless `--threshold`
+  is passed deliberately.
+- **Continuous evaluation** — three managed evaluators (`KitGroundedness`,
+  `KitToolSelection`, `KitRefusalQuality`) sharing their instruction text
+  with the offline judge, wired to `KitQualityMonitor` at 5% sampling.
+  Ships with `enableOnCreate: false`, so deploying Kit never starts
+  evaluation spend; `agentcore resume online-eval KitQualityMonitor`
+  starts it and `agentcore pause` stops it, with no redeploy.
+
+### Continuous integration
+
+- **Tier 1, `evals (offline)`** — every pull request including forks, plus
+  pushes to `main`. No AWS credentials and no AWS calls: 144 harness unit
+  tests, dataset validation, `agentcore validate`. The AgentCore CLI is
+  pinned so a CLI release cannot turn every fork's pull request red.
+- **Tier 2, `evals (live)`** — merge to `main` and manual dispatch, and
+  **ephemeral**: deploy, wait for knowledge-base ingestion, run the suite,
+  tear down. Deliberately **no `schedule:` trigger** — a cron would mean a
+  permanently deployed eval stack, which is the always-on bill Kit says it
+  does not have.
+- **Teardown is asserted, not documented.** `aws cloudformation
+  delete-stack` under `if: always()` with a second attempt, because
+  `DELETE_FAILED` / `NotStabilized` on the AgentCore runtime — the 0.1
+  limitation below — leaves a stack that looks deleted and is still
+  billing. `cancel-in-progress: false`, because cancelling mid-run skips
+  teardown and orphans the stack.
+- `scripts/wait-for-ingestion.sh` blocks until every data source reports
+  `COMPLETE` and times out loudly. Retrieval cases scored mid-ingestion are
+  indistinguishable from a quality regression.
+
+### Enablement
+
+- `./scripts/eval.sh` — one entry point, with `--validate`, `--dry-run`,
+  `--no-judge`, `--suite`, `--case`, `--threshold` and
+  `--adversarial-corpus`
+- `docs/evaluation.md` — the full guide: the two tiers, reading the
+  scorecard, where the judge runs and how to verify it yourself, the
+  adversarial opt-in, cost, and what the numbers do not tell you
+- `scripts/preflight.sh` now checks CloudWatch Transaction Search, as a
+  **warning**: managed evaluators and `agentcore run eval` need trace
+  ingestion, while the deterministic gate does not
+
+### Verified
+
+- 144 harness unit tests pass; the `--validate` path imports no AWS module
+  at all, confirmed by inspecting `sys.modules` after a run.
+- The `au.` judge profile resolves to exactly two model ARNs, both
+  Australian (`aws bedrock get-inference-profile`, ap-southeast-2,
+  23 Sep 2026).
+- `agentcore validate` passes; `./scripts/eval.sh --validate` reports
+  22 cases valid.
+- There is no `agentcore destroy` subcommand in CLI 0.28.1 — teardown goes
+  through CloudFormation directly.
+
+### Known limitations
+
+- **`REFUSAL_MARKERS` is a phrase list, not a classifier.** A model that
+  declines in wording outside the list ("I'm not going to write that
+  scene") scores as "not refused" while behaving correctly. Read a FAIL on
+  a refusal case as "go and look at the response", and read the adversarial
+  catch rate as a floor rather than a ceiling. The system-prompt
+  exfiltration case likewise detects verbatim disclosure only — a close
+  paraphrase is not caught.
+- **Indirect adversarial cases need manual corpus loading.**
+  `evals/corpus/adversarial/` is deliberately not ingested by
+  `agentcore deploy`; loading it is a manual step into a throwaway
+  knowledge base. Until then those cases are SKIPPED and the suite measures
+  direct attacks only.
+- **Judge scores are not deterministic run to run.** `temperature` is 0,
+  which is not the same as reproducible. The score is a trend across many
+  runs, never a threshold on one — which is why nothing gates on it.
+- **The live CI tier needs two repository secrets** —
+  `KIT_EVAL_ROLE_ARN` and `KIT_EVAL_ACCOUNT_ID` — that forks will not have.
+  It skips quietly on a fork rather than going permanently red, so a fork
+  gets the offline tier only.
+- **Nothing in CI protects a stack from a job that never finishes.** The
+  teardown step, its retry and the absence of a cron all assume the job
+  reaches its last step; a dead runner or a cancelled workflow orphans a
+  deployed, billing stack. Put an AWS Budget alarm on any account running
+  the live tier — it is the only mechanism here that works when Actions
+  isn't.
+- **22 cases is a smoke test, not a benchmark.** It catches "retrieval
+  broke" and "memory stopped persisting". It does not characterise quality,
+  and a passing gate is not a production sign-off.
+
 ## [0.1.0] — 2026-09-08
 
 First release. A complete, working agent deployable into a fresh AWS
@@ -71,4 +193,5 @@ documented.
 - API defaults (2,000 requests/day, 20,000-character prompts) are sized
   for evaluation, not production.
 
+[0.2.0]: https://github.com/honest-fox/kit-aws-ai-agentcore-starter-kit/releases/tag/v0.2.0
 [0.1.0]: https://github.com/honest-fox/kit-aws-ai-agentcore-starter-kit/releases/tag/v0.1.0
