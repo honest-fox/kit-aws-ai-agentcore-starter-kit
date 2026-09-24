@@ -1,0 +1,297 @@
+name: evals (live)
+
+# Deliberately NO `schedule:` trigger.
+#
+# Kit's promise is that you deploy it, poke it, delete it, and nothing keeps
+# costing money. A cron here would mean a permanently deployed eval stack —
+# exactly the always-on bill the product says it does not have. So the live
+# tier is ephemeral: deploy, wait for ingestion, run the suite, tear down.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      threshold:
+        description: 'Quality gate pass rate, 0-1'
+        required: false
+        default: '0.90'
+
+permissions:
+  id-token: write    # OIDC role assumption
+  contents: write    # commit the scorecard back to main
+
+# Two live runs must never overlap: they share one stack name in one
+# account, so the second would fight the first's deploy or, worse, tear
+# down underneath it. cancel-in-progress is false on purpose — cancelling
+# mid-run skips teardown and orphans a deployed, billing stack.
+concurrency:
+  group: evals-live
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-southeast-2
+  KIT_EVAL_STACK: AgentCore-kit-default
+  AGENTCORE_VERSION: '0.28.1'
+
+jobs:
+  # Secrets are unavailable to job-level `if:`, so the check lives in a job
+  # of its own whose output gates the real one. Without this, a fork — or
+  # this repo before its secrets are configured — fails at the OIDC step
+  # with "Could not load credentials from any providers", which reads like
+  # a broken workflow rather than an unconfigured one.
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - id: check
+        env:
+          ROLE_ARN: ${{ secrets.KIT_EVAL_ROLE_ARN }}
+          ACCOUNT_ID: ${{ secrets.KIT_EVAL_ACCOUNT_ID }}
+        run: |
+          set -uo pipefail
+          if [ -n "$ROLE_ARN" ] && [ -n "$ACCOUNT_ID" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "Live eval secrets present." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "configured=false" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Live evals skipped"
+            echo
+            echo 'No AWS account is configured for this repository. The live tier needs'
+            echo 'two repository secrets:'
+            echo
+            echo '- `KIT_EVAL_ROLE_ARN` — an IAM role trusting this repo via GitHub OIDC'
+            echo '- `KIT_EVAL_ACCOUNT_ID` — the account that role lives in'
+            echo
+            echo 'The offline tier (`evals (offline)`) covers this commit and needs neither.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # On a fork this is the expected, correct state: skip quietly so
+          # forks are not permanently red for something they cannot fix.
+          # On the upstream repo it is a real misconfiguration — the live
+          # tier silently never running is the failure mode that hides a
+          # broken quality gate for months, so fail there.
+          if [ "${{ github.repository_owner }}" = "honest-fox" ]; then
+            echo "::error::KIT_EVAL_ROLE_ARN / KIT_EVAL_ACCOUNT_ID are not configured on the upstream repository, so the live eval tier cannot run."
+            exit 1
+          fi
+          echo "::notice::Live evals skipped — no AWS account configured for this fork."
+
+  live:
+    needs: preflight
+    if: needs.preflight.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    # Bounds the whole ephemeral cycle. Generous: deploy ~5 min, ingestion
+    # up to 20, suite, then a teardown that may need a second attempt.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        # v4 persists the GITHUB_TOKEN credentials, which the scorecard
+        # commit below pushes with. Do not bump to v5 without setting
+        # persist-credentials: true — v5 flipped that default.
+        with:
+          persist-credentials: true
+          # Full history. The scorecard commit rebases onto whatever main
+          # has become during the run, and a rebase on the default depth-1
+          # shallow clone has no common ancestor to rebase from.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install the AgentCore CLI
+        run: npm install -g "@aws/agentcore@${AGENTCORE_VERSION}"
+
+      - name: Assume the eval role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.KIT_EVAL_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: kit-evals-${{ github.run_id }}
+
+      - name: Write the deployment target
+        env:
+          ACCOUNT_ID: ${{ secrets.KIT_EVAL_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          # Exactly one target, so exactly one stack synthesises and the
+          # stack name stays AgentCore-kit-default — which is what the
+          # harness, the ingestion wait and the teardown all resolve.
+          # aws-targets.json is gitignored, so this never reaches a commit.
+          python3 - <<'PY'
+          import json, os
+          json.dump([{
+              "name": "default",
+              "description": "Ephemeral CI evaluation target",
+              "account": os.environ["ACCOUNT_ID"],
+              "region": os.environ["AWS_REGION"],
+          }], open("agentcore/aws-targets.json", "w"), indent=2)
+          PY
+          agentcore validate
+
+      - name: Deploy
+        run: agentcore deploy -y
+
+      # Retrieval cases scored against a knowledge base that is still
+      # ingesting are indistinguishable from a quality regression. The
+      # script times out loudly rather than letting the suite start.
+      - name: Wait for knowledge-base ingestion
+        run: ./scripts/wait-for-ingestion.sh
+
+      - name: Run the golden set
+        env:
+          # Read by harness.config.threshold(). workflow_dispatch supplies
+          # it; a push to main gets the 0.90 default.
+          KIT_EVAL_THRESHOLD: ${{ inputs.threshold || '0.90' }}
+        run: |
+          set -euo pipefail
+          # Fail on a malformed input here, where the message is obvious,
+          # rather than as a float() traceback after the suite has run.
+          python3 -c "
+          import os, sys
+          v = os.environ['KIT_EVAL_THRESHOLD']
+          try:
+              f = float(v)
+          except ValueError:
+              sys.exit(f'threshold {v!r} is not a number')
+          if not 0 < f <= 1:
+              sys.exit(f'threshold {f} is outside (0, 1]')
+          "
+          ./scripts/eval.sh
+
+      # Managed evaluator scores over the traces this run just produced.
+      # Reported, never gated — same reasoning as the LLM judge: a managed
+      # scorer shifting under a model update must not break the build.
+      - name: Managed evaluator scores
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          # CloudWatch put-to-get is ~10 seconds end to end. The sleep 300
+          # in older docs is 30x longer than the spans need.
+          sleep 15
+          agentcore run eval --runtime kit --days 1 --json \
+            | tee evals/results/managed-eval.json
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results-${{ github.run_id }}
+          path: evals/results/
+          if-no-files-found: warn
+
+      - name: Commit the scorecard
+        if: success() && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          # Scoped to the two canonical scorecard files, by name.
+          #
+          # Not `git add evals/results`: that directory also holds
+          # managed-eval.json, the raw `agentcore run eval --json` output,
+          # which carries full runtime ARNs — and an ARN contains the
+          # account id. This repo is public. The scorecard is safe by
+          # construction (harness.cli records only the last ARN segment as
+          # model_id); the raw CLI output is not, so it ships as a build
+          # artifact and never as a commit.
+          git add -- evals/results/scorecard.md evals/results/latest.json
+
+          if git diff --cached --quiet; then
+            echo 'Scorecard unchanged.'
+            exit 0
+          fi
+
+          # [skip ci] is the belt. The braces is that a push made with the
+          # default GITHUB_TOKEN does not trigger workflow runs at all — so
+          # this cannot re-trigger `push: branches: [main]` on either
+          # workflow. Keep BOTH: swap in a PAT or App token and the token
+          # rule stops applying, and only [skip ci] stands between this
+          # step and a deploy/teardown loop that bills forever.
+          git commit -m 'Update eval scorecard [skip ci]' \
+                     -m "From ${GITHUB_SHA} (run ${GITHUB_RUN_ID})."
+
+          # A merge can land during the ~20 minutes this job takes, so a
+          # straight push races and fails non-fast-forward. Rebase onto
+          # whatever main is now; this commit only touches evals/results/,
+          # so it cannot conflict with ordinary work.
+          for attempt in 1 2 3; do
+            git fetch origin main
+            if ! git rebase origin/main; then
+              git rebase --abort || true
+              echo "::error::Could not rebase the scorecard onto main."
+              exit 1
+            fi
+            if git push origin HEAD:main; then
+              echo 'Scorecard pushed.'
+              exit 0
+            fi
+            echo "Push attempt ${attempt} lost a race; retrying."
+            sleep $(( attempt * 10 ))
+          done
+          echo '::error::Could not push the scorecard after 3 attempts.'
+          exit 1
+
+      # Always, and with a retry. Teardown can stop at DELETE_FAILED with
+      # HandlerErrorCode NotStabilized on the AgentCore runtime — a
+      # documented 0.1 limitation — which leaves memory, knowledge base,
+      # vector store, buckets, ECR and the KMS key in place: it looks
+      # deleted and is still billing. Re-running clears it. Running this
+      # every time turns that caveat into a continuously asserted
+      # behaviour rather than a paragraph in the CHANGELOG.
+      - name: Tear down
+        if: always()
+        run: |
+          set -uo pipefail
+          STACK="${KIT_EVAL_STACK}"
+
+          gone() { ! aws cloudformation describe-stacks --stack-name "$STACK" >/dev/null 2>&1; }
+
+          for attempt in 1 2; do
+            if gone; then
+              echo "Stack ${STACK} is gone."
+              exit 0
+            fi
+            echo "::group::Teardown attempt ${attempt}"
+            if ! err="$(aws cloudformation delete-stack --stack-name "$STACK" 2>&1)"; then
+              echo "$err"
+              echo '::endgroup::'
+              # A refused delete-stack call — an IAM denial, a stack policy,
+              # termination protection — fails identically on every retry.
+              # Retrying just burns minutes and buries the real cause, so
+              # stop here and name it.
+              echo "::error::delete-stack was refused for ${STACK} in ${AWS_REGION}. This is not the NotStabilized retry case; the stack is still deployed and still billing. Delete it by hand and fix the role's permissions."
+              exit 1
+            fi
+            # The waiter fails fast on DELETE_FAILED rather than polling out.
+            aws cloudformation wait stack-delete-complete --stack-name "$STACK" || true
+            echo '::endgroup::'
+          done
+
+          if gone; then
+            echo "Stack ${STACK} is gone."
+            exit 0
+          fi
+
+          # Two attempts were not enough. Say why, loudly, with the
+          # resources that blocked it — a silent failure here is the one
+          # that bills until someone notices.
+          status="$(aws cloudformation describe-stacks --stack-name "$STACK" \
+            --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo UNKNOWN)"
+          echo "Resources that blocked deletion:"
+          aws cloudformation describe-stack-events --stack-name "$STACK" \
+            --query "reverse(StackEvents[?ResourceStatus=='DELETE_FAILED'].[LogicalResourceId,ResourceStatusReason])" \
+            --output text 2>/dev/null | head -20 || true
+          echo "::error::${STACK} is still present in ${AWS_REGION} after two delete attempts (status ${status}). It is still billing. Delete it by hand: aws cloudformation delete-stack --stack-name ${STACK} --region ${AWS_REGION}"
+          exit 1

@@ -1,0 +1,36 @@
+name: evals (offline)
+
+# Every pull request, including from forks. No AWS credentials, no cost,
+# no network calls to Bedrock.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Harness unit tests
+        working-directory: evals
+        run: uv run --extra dev pytest -v
+      - name: Validate golden-set datasets
+        run: ./scripts/eval.sh --validate
+      - name: Validate AgentCore configuration
+        run: |
+          # agentcore/aws-targets.json is gitignored — the repo is public and
+          # must not carry a real account id — so it is absent from a fresh
+          # checkout and `agentcore validate` exits 1 with
+          # "Required file not found: aws-targets.json". Seed the placeholder
+          # example (account 123456789012). Validation is structural; it never
+          # contacts the account, so the placeholder is enough and this step
+          # stays credential-free.
+          [ -f agentcore/aws-targets.json ] || \
+            cp agentcore/aws-targets.example.json agentcore/aws-targets.json
+          npm install -g @aws/agentcore
+          agentcore validate
