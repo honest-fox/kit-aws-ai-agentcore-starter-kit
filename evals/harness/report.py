@@ -72,7 +72,7 @@ def _percentile(values: list[float], pct: float) -> float | None:
     """Nearest-rank percentile.
 
     With few samples this correctly collapses toward the maximum instead of
-    pretending to resolution the sample size cannot support: with 17 cases,
+    pretending to resolution the sample size cannot support: at this suite size,
     the 95th percentile genuinely is the slowest one.
     """
     if not values:
