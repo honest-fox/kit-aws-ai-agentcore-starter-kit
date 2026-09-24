@@ -21,6 +21,9 @@ jobs:
         run: uv run --extra dev pytest -v
       - name: Validate golden-set datasets
         run: ./scripts/eval.sh --validate
+      # Pinned: this tier's purpose is to work for anyone who forks Kit.
+      # An unpinned CLI means the day a release changes validation, every
+      # fork's PR goes red with no code change on their side.
       - name: Validate AgentCore configuration
         run: |
           # agentcore/aws-targets.json is gitignored — the repo is public and
@@ -32,5 +35,5 @@ jobs:
           # stays credential-free.
           [ -f agentcore/aws-targets.json ] || \
             cp agentcore/aws-targets.example.json agentcore/aws-targets.json
-          npm install -g @aws/agentcore
+          npm install -g @aws/agentcore@0.28.1
           agentcore validate
