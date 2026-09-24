@@ -19,11 +19,8 @@ class CaseResult:
     suite: str
     status: str  # PASS | FAIL | ERROR
     assertions: list[Verdict] = field(default_factory=list)
-    judge_scores: dict[str, float] = field(default_factory=dict)
     latency_ms: float = 0.0
     error: str | None = None
-    judge_attempted: int = 0
-    judge_scored: int = 0
     tags: list[str] = field(default_factory=list)
 
 
@@ -121,22 +118,6 @@ def _fmt_ms(ms: float | None) -> str:
     return "n/a" if ms is None else f"{ms:.0f}ms"
 
 
-def _fmt_coverage(meta: dict) -> str:
-    """How many judge assertions actually produced a score.
-
-    A judge that silently returns nothing - a fence-wrapping model, a wrong
-    envelope path, a throttle - renders identically to one that was never
-    run: a column of dashes, CI green. Stating coverage explicitly means a
-    reader can tell "scored 3.9" from "scored nothing".
-    """
-    attempted = meta.get("judge_attempted")
-    if not attempted:
-        return "not run"
-    scored = meta.get("judge_scored", 0)
-    note = "" if scored == attempted else "  **judge degraded**"
-    return f"{scored}/{attempted} scored{note}"
-
-
 def render_markdown(results: list[CaseResult], meta: dict) -> str:
     # Every row in the Summary block describes the gated population -
     # the same population cli.gate() scores and render_json() reports.
@@ -151,7 +132,6 @@ def render_markdown(results: list[CaseResult], meta: dict) -> str:
         "",
         f"- **Run:** {now}",
         f"- **Agent model:** `{meta.get('model_id', 'unknown')}`",
-        f"- **Judge model:** `{meta.get('judge_model_id', 'not run')}`",
         f"- **Region:** `{meta.get('region', 'unknown')}`",
         f"- **Commit:** `{meta.get('git_sha', 'unknown')}`",
         "",
@@ -182,27 +162,26 @@ def render_markdown(results: list[CaseResult], meta: dict) -> str:
     lines += [
         f"| Latency p50 (gated suites) | {_fmt_ms(s['p50_latency_ms'])} |",
         f"| Latency p95 (gated suites) | {_fmt_ms(s['p95_latency_ms'])} |",
-        f"| Judge coverage | {_fmt_coverage(meta)} |",
         "",
         "## Cases",
         "",
-        "| Case | Suite | Status | Latency | Judge | Detail |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| Case | Suite | Status | Latency | Detail |",
+        "| --- | --- | --- | --- | --- |",
     ]
     for r in sorted(results, key=lambda x: (x.suite, x.case_id)):
-        judge = ", ".join(f"{k} {v}" for k, v in r.judge_scores.items()) or "—"
         if r.status == "ERROR":
             detail = r.error or "unknown error"
         else:
             detail = "; ".join(v.detail for v in r.assertions if not v.passed) or "—"
         lines.append(
             f"| `{r.case_id}` | {r.suite} | {r.status} | "
-            f"{_fmt_ms(r.latency_ms)} | {_cell(judge)} | {_cell(detail)} |"
+            f"{_fmt_ms(r.latency_ms)} | {_cell(detail)} |"
         )
     lines.append("")
     lines.append(
-        "> Judge scores and adversarial catch rates are reported, never gated. "
-        "Only the deterministic pass rate gates CI."
+        "> Adversarial catch rates are reported, never gated. Only the "
+        "deterministic pass rate gates CI. Judged quality is scored by the "
+        "managed evaluators in agentcore.json, not here."
     )
     if adv:
         lines.append("")

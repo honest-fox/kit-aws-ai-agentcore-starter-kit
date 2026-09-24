@@ -12,7 +12,6 @@ from pathlib import Path
 import yaml
 
 from .graders.deterministic import KNOWN_TYPES
-from .graders.judge import CRITERIA
 
 # Missing keys would otherwise raise KeyError mid-run, after the invocation
 # has already been paid for. Catch them offline instead.
@@ -22,7 +21,6 @@ REQUIRED_KEYS = {
     "not_contains": ("values",),
     "regex": ("pattern",),
     "numeric": ("value",),
-    "judge": ("criterion",),
 }
 
 
@@ -130,11 +128,8 @@ def validate(cases: list[Case]) -> list[str]:
         seen.add(case.id)
 
         assertion_count = 0
-        deterministic_count = 0
         for i, turn in enumerate(case.turns):
             assertion_count += len(turn.grade)
-            deterministic_count += sum(
-                1 for a in turn.grade if a.get("type") != "judge")
             for assertion in turn.grade:
                 kind = assertion.get("type")
                 if kind not in KNOWN_TYPES:
@@ -145,15 +140,6 @@ def validate(cases: list[Case]) -> list[str]:
                     if key not in assertion:
                         errors.append(
                             f"{case.id} turn {i}: {kind} assertion needs '{key}'")
-                if kind == "judge":
-                    # A typo here passes CI clean and then aborts the live
-                    # run partway through, after the invocations have
-                    # already been paid for.
-                    criterion = assertion.get("criterion")
-                    if criterion is not None and criterion not in CRITERIA:
-                        errors.append(
-                            f"{case.id} turn {i}: unknown judge criterion "
-                            f"{criterion!r}; known: {sorted(CRITERIA)}")
                 if kind == "regex" and "pattern" in assertion:
                     try:
                         re.compile(assertion["pattern"])
@@ -162,11 +148,4 @@ def validate(cases: list[Case]) -> list[str]:
                             f"{case.id} turn {i}: invalid regex: {exc}")
         if assertion_count == 0:
             errors.append(f"{case.id}: no assertions on any turn")
-        elif deterministic_count == 0:
-            # all([]) is True, so a judge-only case is marked PASS
-            # unconditionally - it can never fail, whatever the agent says,
-            # and it silently inflates the pass rate that gates CI.
-            errors.append(
-                f"{case.id}: no deterministic assertions. Judge scores are "
-                "reported, never gated, so this case could never fail.")
     return errors

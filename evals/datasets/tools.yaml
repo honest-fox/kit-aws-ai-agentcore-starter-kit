@@ -16,11 +16,9 @@
   tags: [tools, retrieval]
   grade:
     - { type: numeric, value: 26.50, tolerance: 0.01 }
-    - { type: judge, criterion: groundedness }
 
 - id: tools-no-tool-needed-for-greeting
   prompt: "G'day! In one sentence, what are you?"
   tags: [tools, baseline]
   grade:
     - { type: not_contains, values: ["I don't have", "error"] }
-    - { type: judge, criterion: helpfulness }

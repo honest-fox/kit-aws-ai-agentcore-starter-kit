@@ -4,7 +4,6 @@
 #
 #   ./scripts/eval.sh              full suite against your deployed stack
 #   ./scripts/eval.sh --validate   offline dataset check, no AWS needed
-#   ./scripts/eval.sh --no-judge   deterministic assertions only
 #
 # Exits 0 if the quality gate passed, 1 if it failed, 2 on a configuration
 # or dataset error.

@@ -12,41 +12,6 @@ from dataclasses import dataclass
 DEFAULT_STACK = "AgentCore-kit-default"
 DEFAULT_REGION = "ap-southeast-2"
 
-# The judge uses a GEOGRAPHY-SCOPED inference profile, matching what the
-# agent itself does. Verified live against ap-southeast-2 on 23 Sep 2026:
-#
-#   * Every Anthropic model in ap-southeast-2 reports INFERENCE_PROFILE as
-#     its only supported inference type. A bare model ID cannot be invoked
-#     on-demand there at all, so a single-region judge is impossible in
-#     Kit's home region via bedrock-runtime.
-#   * au.anthropic.claude-sonnet-4-5-20250929-v1:0 resolves to exactly two
-#     model ARNs - ap-southeast-2 (Sydney) and ap-southeast-4 (Melbourne).
-#     Nothing else. So "au." IS "inference stays in Australia".
-#
-# The meaningful distinction is therefore geography-scoped vs global, not
-# single-region vs cross-region. global.* is refused below because it would
-# widen the boundary Kit advertises without telling anyone.
-#
-# Deliberately a different model generation from the agent's default
-# (anthropic.claude-sonnet-5): a judge scoring its own model's output is
-# subject to self-preference bias.
-JUDGE_MODEL_NAME = "anthropic.claude-sonnet-4-5-20250929-v1:0"
-
-
-def _geography_prefix(region: str) -> str:
-    """Mirrors _geography_prefix in app/kit/model/load.py.
-
-    Duplicated rather than imported: the harness must not take a dependency
-    on code packaged into the agent container. A consistency test fails if
-    the two ever drift apart.
-    """
-    if region in ("ap-southeast-2", "ap-southeast-4"):
-        return "au"
-    if region.startswith("us-"):
-        return "us"
-    if region.startswith("eu-"):
-        return "eu"
-    return "global"
 
 # Set from observed performance, not aspiration. Two live runs on
 # 2026-09-24: 94.1% (one brittle assertion, since fixed) then 100% on 17
@@ -111,26 +76,6 @@ def resolve_target(stack: str, region: str, cfn_client) -> Target:
         api_key_id=_find(outputs, "ApiKeyId"),
         memory_id=_find(outputs, "MemoryId"),
     )
-
-
-def judge_model_id(region: str) -> str:
-    """The geography-scoped judge profile for a region.
-
-    Refuses to fall back to global.* silently: that would widen the
-    inference boundary Kit advertises. Set KIT_JUDGE_MODEL_ID to opt in
-    deliberately, or run with --no-judge.
-    """
-    override = os.environ.get("KIT_JUDGE_MODEL_ID")
-    if override:
-        return override
-    prefix = _geography_prefix(region)
-    if prefix == "global":
-        raise ValueError(
-            f"no geography-scoped inference profile for {region}: the only "
-            "option there is global.*, which routes outside the geography. "
-            "Set KIT_JUDGE_MODEL_ID explicitly to accept that, or use "
-            "--no-judge.")
-    return f"{prefix}.{JUDGE_MODEL_NAME}"
 
 
 def threshold() -> float:

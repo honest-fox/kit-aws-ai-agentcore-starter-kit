@@ -125,15 +125,12 @@ _GRADERS = {
     "refused": _refused,
 }
 
-# "judge" is valid in a dataset but handled by the judge grader, not here.
-KNOWN_TYPES = frozenset(_GRADERS) | {"judge"}
+KNOWN_TYPES = frozenset(_GRADERS)
 
 
 def grade(assertion: dict, response: str) -> Verdict:
     """Grade one assertion against one response."""
     kind = assertion.get("type")
-    if kind == "judge":
-        raise ValueError("judge assertions are scored by graders.judge, not deterministic")
     if kind not in _GRADERS:
         raise ValueError(f"unknown assertion type: {kind!r}")
     return _GRADERS[kind](assertion, response)

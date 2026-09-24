@@ -1,4 +1,4 @@
-"""Command-line entry point. Wires config, transport, judge and runner.
+"""Command-line entry point. Wires config, transport and runner.
 
 Exit codes: 0 pass, 1 gate failed, 2 configuration or validation error.
 """
@@ -14,7 +14,6 @@ from pathlib import Path
 
 from . import config as cfg
 from .datasets import load_all, validate
-from .graders.judge import BedrockJudge, NullJudge
 from .invoke import RuntimeTransport
 from .report import (
     CaseResult, render_json, render_markdown, split_suites, summarise)
@@ -27,8 +26,6 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="eval.sh", description="Evaluate a deployed Kit agent.")
     p.add_argument("--validate", action="store_true",
                    help="Check datasets offline and exit. No AWS calls.")
-    p.add_argument("--no-judge", action="store_true",
-                   help="Deterministic assertions only.")
     p.add_argument("--suite", help="Run only this suite (dataset file stem).")
     p.add_argument("--case", help="Run only this case id.")
     p.add_argument("--dry-run", action="store_true",
@@ -159,16 +156,6 @@ def main(argv=None) -> int:
                           retries={"max_attempts": 2, "mode": "standard"})),
     )
 
-    if args.no_judge:
-        judge = NullJudge()
-        judge_model = None
-    else:
-        judge_model = cfg.judge_model_id(region)
-        judge = BedrockJudge(
-            judge_model,
-            boto3.client("bedrock-runtime", region_name=region,
-                         config=Config(read_timeout=120, connect_timeout=15)))
-
     # An indirect injection case cannot land if the payload was never in
     # the knowledge base. Running it anyway would bank a trivial pass as a
     # caught attack - and cost two live invocations to learn nothing.
@@ -189,7 +176,7 @@ def main(argv=None) -> int:
     def progress(result):
         print(f"  [{result.status:5}] {result.suite}/{result.case_id}")
 
-    results = run_all(to_run, transport, judge, run_id, on_result=progress)
+    results = run_all(to_run, transport, run_id, on_result=progress)
     results += [
         CaseResult(case_id=c.id, suite=c.suite, status="SKIPPED", tags=c.tags,
                    error="indirect injection: poisoned corpus not loaded")
@@ -198,13 +185,10 @@ def main(argv=None) -> int:
 
     meta = {
         "model_id": target.runtime_arn.rsplit("/", 1)[-1],
-        "judge_model_id": judge_model,
         "region": region,
         "stack": stack,
         "git_sha": _git_sha(),
         "run_id": run_id,
-        "judge_attempted": sum(r.judge_attempted for r in results),
-        "judge_scored": sum(r.judge_scored for r in results),
     }
 
     results_dir = ROOT / "results"

@@ -1,7 +1,6 @@
 from harness.runner import run_case, run_all, actor_id_for
 from harness.datasets import Case, Turn
 from harness.invoke import FakeTransport, AgentStreamError
-from harness.graders.judge import NullJudge
 
 
 def case(case_id="c1", turns=None, settle=0):
@@ -11,33 +10,33 @@ def case(case_id="c1", turns=None, settle=0):
 
 
 def test_passing_case_is_marked_pass():
-    r = run_case(case(), FakeTransport(["ok"]), NullJudge(), "run1", sleep=lambda s: None)
+    r = run_case(case(), FakeTransport(["ok"]), "run1", sleep=lambda s: None)
     assert r.status == "PASS"
 
 
 def test_failing_assertion_is_marked_fail_not_error():
-    r = run_case(case(), FakeTransport(["nope"]), NullJudge(), "run1", sleep=lambda s: None)
+    r = run_case(case(), FakeTransport(["nope"]), "run1", sleep=lambda s: None)
     assert r.status == "FAIL"
     assert r.error is None
 
 
 def test_transport_failure_after_retries_is_error_not_fail():
     t = FakeTransport([RuntimeError("boom"), RuntimeError("boom"), RuntimeError("boom")])
-    r = run_case(case(), t, NullJudge(), "run1", retries=3, sleep=lambda s: None)
+    r = run_case(case(), t, "run1", retries=3, sleep=lambda s: None)
     assert r.status == "ERROR"
     assert "boom" in r.error
 
 
 def test_a_mid_stream_agent_error_is_classified_as_error():
     t = FakeTransport([AgentStreamError("ThrottlingException")] * 3)
-    r = run_case(case(), t, NullJudge(), "run1", retries=3, sleep=lambda s: None)
+    r = run_case(case(), t, "run1", retries=3, sleep=lambda s: None)
     assert r.status == "ERROR"
     assert "Throttling" in r.error
 
 
 def test_transport_failure_is_retried_and_can_recover():
     t = FakeTransport([RuntimeError("transient"), "ok"])
-    r = run_case(case(), t, NullJudge(), "run1", retries=3, sleep=lambda s: None)
+    r = run_case(case(), t, "run1", retries=3, sleep=lambda s: None)
     assert r.status == "PASS"
     assert len(t.calls) == 2
 
@@ -62,7 +61,7 @@ def test_all_turns_share_one_session_unless_new_session_is_set():
         Turn("second", False, [{"type": "contains_all", "values": ["ok"]}]),
     ]
     t = FakeTransport(["x", "ok"])
-    run_case(case(turns=turns), t, NullJudge(), "run1", sleep=lambda s: None)
+    run_case(case(turns=turns), t, "run1", sleep=lambda s: None)
     assert t.calls[0]["session_id"] == t.calls[1]["session_id"]
 
 
@@ -72,7 +71,7 @@ def test_new_session_turn_gets_a_different_session_but_the_same_actor():
         Turn("second", True, [{"type": "contains_all", "values": ["ok"]}]),
     ]
     t = FakeTransport(["x", "ok"])
-    run_case(case(turns=turns), t, NullJudge(), "run1", sleep=lambda s: None)
+    run_case(case(turns=turns), t, "run1", sleep=lambda s: None)
     assert t.calls[0]["session_id"] != t.calls[1]["session_id"]
     assert t.calls[0]["actor_id"] == t.calls[1]["actor_id"]
 
@@ -84,49 +83,14 @@ def test_settle_seconds_is_slept_before_a_new_session_turn():
         Turn("second", True, [{"type": "contains_all", "values": ["ok"]}]),
     ]
     run_case(case(turns=turns, settle=90), FakeTransport(["x", "ok"]),
-             NullJudge(), "run1", sleep=slept.append)
+             "run1", sleep=slept.append)
     assert 90 in slept
 
 
 def test_run_all_returns_one_result_per_case():
     results = run_all([case("a"), case("b")], FakeTransport(["ok", "ok"]),
-                      NullJudge(), "run1", sleep=lambda s: None)
+                      "run1", sleep=lambda s: None)
     assert [r.case_id for r in results] == ["a", "b"]
-
-
-def test_judge_attempts_and_scores_are_counted():
-    c = Case(id="j", suite="s", tags=[], settle_seconds=0,
-             turns=[Turn("q", False, [
-                 {"type": "contains_all", "values": ["ok"]},
-                 {"type": "judge", "criterion": "groundedness"}])])
-    r = run_case(c, FakeTransport(["ok"]), NullJudge(), "run1", sleep=lambda s: None)
-    assert r.judge_attempted == 1
-    assert r.judge_scored == 0        # NullJudge never scores
-    assert r.judge_scores == {}       # unscored criteria are omitted
-
-
-def test_a_multi_turn_judge_sees_the_conversation_not_just_the_last_prompt():
-    # Judging "What do I drink?" in isolation would score a CORRECT answer
-    # low, because the grounding material is in a turn the judge never saw.
-    seen = {}
-
-    class RecordingJudge:
-        def score(self, criterion, question, answer):
-            seen["question"] = question
-            from harness.graders.judge import JudgeScore
-            return JudgeScore(criterion, 5.0, "r")
-
-    turns = [
-        Turn("Remember I drink decaf.", False, []),
-        Turn("What do I drink?", False, [
-            {"type": "contains_all", "values": ["decaf"]},
-            {"type": "judge", "criterion": "groundedness"}]),
-    ]
-    run_case(case(turns=turns), FakeTransport(["noted", "you drink decaf"]),
-             RecordingJudge(), "run1", sleep=lambda s: None)
-    assert "Remember I drink decaf." in seen["question"]
-    assert "noted" in seen["question"]
-
 
 def test_verdicts_are_kept_when_a_later_turn_errors():
     turns = [
@@ -134,7 +98,7 @@ def test_verdicts_are_kept_when_a_later_turn_errors():
         Turn("second", False, [{"type": "contains_all", "values": ["ok"]}]),
     ]
     t = FakeTransport(["ok"] + [RuntimeError("boom")] * 3)
-    r = run_case(case(turns=turns), t, NullJudge(), "run1", retries=3,
+    r = run_case(case(turns=turns), t, "run1", retries=3,
                  sleep=lambda s: None)
     assert r.status == "ERROR"
     assert len(r.assertions) == 1     # turn 1's evidence survives
@@ -144,5 +108,5 @@ def test_fake_transport_exhaustion_is_not_swallowed_as_an_error_status():
     # The guard exists to fail loudly on an off-by-one in the runner.
     import pytest
     with pytest.raises(AssertionError, match="exhausted"):
-        run_case(case(), FakeTransport([]), NullJudge(), "run1",
+        run_case(case(), FakeTransport([]), "run1",
                  sleep=lambda s: None)

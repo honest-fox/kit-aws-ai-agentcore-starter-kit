@@ -5,11 +5,11 @@ from harness.report import (
 from harness.graders.deterministic import Verdict
 
 
-def result(case_id, suite, status, latency=100.0, judge=None, error=None):
+def result(case_id, suite, status, latency=100.0, error=None):
     return CaseResult(
         case_id=case_id, suite=suite, status=status,
         assertions=[Verdict(status == "PASS", "detail")],
-        judge_scores=judge or {}, latency_ms=latency, error=error,
+        latency_ms=latency, error=error,
     )
 
 
@@ -40,13 +40,6 @@ def test_markdown_reports_errors_in_their_own_column():
     assert "timeout" in md
     assert "au.test" in md
 
-
-def test_markdown_includes_judge_scores_when_present():
-    md = render_markdown(
-        [result("a", "retrieval", "PASS", judge={"groundedness": 4.5})],
-        {"model_id": "m", "region": "r", "git_sha": "s"},
-    )
-    assert "4.5" in md
 
 
 def test_json_round_trips_the_summary_and_cases():
@@ -81,7 +74,7 @@ def test_a_pipe_in_a_failure_detail_cannot_break_the_table():
     )
     md = render_markdown([r], {"model_id": "m", "region": "r", "git_sha": "s"})
     row = next(line for line in md.splitlines() if line.startswith("| `a`"))
-    assert row.count("|") - row.count("\\|") == 7   # 6 columns, 7 delimiters
+    assert row.count("|") - row.count("\\|") == 6   # 5 columns, 6 delimiters
 
 
 def test_latency_excludes_errored_cases_from_the_sample():
@@ -90,37 +83,6 @@ def test_latency_excludes_errored_cases_from_the_sample():
         result("b", "s", "ERROR", latency=60000.0, error="timeout"),
     ]
     assert summarise(results)["p50_latency_ms"] == 10.0
-
-
-def test_judge_coverage_is_stated_so_silent_blankness_is_visible():
-    md = render_markdown([result("a", "s", "PASS")], {
-        "model_id": "m", "region": "r", "git_sha": "s",
-        "judge_attempted": 12, "judge_scored": 0})
-    assert "0/12 scored" in md
-    assert "judge degraded" in md
-
-
-def test_full_judge_coverage_is_not_flagged_as_degraded():
-    md = render_markdown([result("a", "s", "PASS")], {
-        "model_id": "m", "region": "r", "git_sha": "s",
-        "judge_attempted": 12, "judge_scored": 12})
-    assert "12/12 scored" in md
-    assert "judge degraded" not in md
-
-
-def test_coverage_reads_not_run_when_the_judge_was_disabled():
-    md = render_markdown([result("a", "s", "PASS")],
-                         {"model_id": "m", "region": "r", "git_sha": "s"})
-    assert "not run" in md
-
-
-# --- adversarial split ----------------------------------------------------
-#
-# The scorecard is a committed artifact. If its headline rate covered a
-# different population from the one cli.gate() scores, the published number
-# and the enforced number would diverge silently - the failure mode that
-# makes a scorecard worse than none.
-
 
 def test_headline_pass_rate_ignores_adversarial_results():
     results = [

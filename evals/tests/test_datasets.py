@@ -151,25 +151,6 @@ def test_non_numeric_settle_seconds_names_the_case(tmp_path):
         load_suite(p)
 
 
-def test_validate_rejects_a_judge_only_case():
-    # all([]) is True, so a case with no deterministic assertions is marked
-    # PASS unconditionally and silently inflates the CI gate.
-    cases = [Case(id="judge-only", suite="a", tags=[], settle_seconds=0,
-                  turns=[Turn("x", False,
-                              [{"type": "judge", "criterion": "groundedness"}])])]
-    errors = validate(cases)
-    assert any("no deterministic assertions" in e for e in errors)
-
-
-def test_validate_rejects_an_unknown_judge_criterion():
-    # A typo passes CI clean, then aborts the live run partway through -
-    # after the invocations have already been paid for.
-    cases = [Case(id="typo", suite="a", tags=[], settle_seconds=0,
-                  turns=[Turn("x", False, [
-                      {"type": "contains_all", "values": ["a"]},
-                      {"type": "judge", "criterion": "groundedess"}])])]
-    errors = validate(cases)
-    assert any("unknown judge criterion" in e for e in errors)
 
 
 def test_the_shipped_golden_set_satisfies_both_rules():

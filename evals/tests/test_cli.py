@@ -10,9 +10,6 @@ def test_validate_flag_parses():
     assert build_parser().parse_args(["--validate"]).validate is True
 
 
-def test_defaults_enable_the_judge():
-    assert build_parser().parse_args([]).no_judge is False
-
 
 def test_suite_and_case_filters_parse():
     args = build_parser().parse_args(["--suite", "retrieval", "--case", "abc"])
@@ -134,12 +131,10 @@ def _live_run(tmp_path, monkeypatch, results):
     monkeypatch.setattr(cli.cfg, "region", lambda: "ap-southeast-2")
     monkeypatch.setattr(cli.cfg, "stack_name", lambda: "KitStack")
     monkeypatch.setattr(cli.cfg, "threshold", lambda: 0.9)
-    monkeypatch.setattr(cli.cfg, "judge_model_id", lambda region: "judge-model")
     monkeypatch.setattr(
         cli.cfg, "resolve_target",
         lambda stack, region, client: type("T", (), {"runtime_arn": "arn:aws:x/kit"})())
     monkeypatch.setattr(cli, "RuntimeTransport", lambda *a, **k: object())
-    monkeypatch.setattr(cli, "BedrockJudge", lambda *a, **k: object())
     monkeypatch.setattr(cli, "run_all", lambda *a, **k: results)
     return cli
 

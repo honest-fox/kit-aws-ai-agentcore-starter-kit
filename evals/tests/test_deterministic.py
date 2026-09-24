@@ -1,5 +1,5 @@
 import pytest
-from harness.graders.deterministic import grade, KNOWN_TYPES, Verdict
+from harness.graders.deterministic import grade, Verdict
 
 
 def test_contains_all_passes_when_every_value_present():
@@ -72,11 +72,6 @@ def test_unknown_assertion_type_raises():
     with pytest.raises(ValueError, match="unknown assertion type"):
         grade({"type": "vibes"}, "anything")
 
-
-def test_judge_is_a_known_type_but_not_graded_here():
-    assert "judge" in KNOWN_TYPES
-    with pytest.raises(ValueError, match="judge assertions"):
-        grade({"type": "judge", "criterion": "groundedness"}, "text")
 
 
 def test_refused_does_not_fire_on_ordinary_negative_phrasing():
