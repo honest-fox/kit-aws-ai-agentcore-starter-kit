@@ -210,6 +210,31 @@ if [ -n "$WANT_REGION" ] && [ -n "$CALLER" ] && [ "$CALLER" != "None" ]; then
   fi
 fi
 
+# -------------------------------------------------- evaluation prerequisites
+
+if [ -n "$WANT_REGION" ] && [ -n "$CALLER" ] && [ "$CALLER" != "None" ]; then
+  printf '\n%sEvaluation (optional)%s\n' "$B" "$X"
+
+  TS_JSON="$(aws xray get-trace-segment-destination --region "$WANT_REGION" 2>/dev/null || true)"
+  TS_DEST="$(printf '%s' "$TS_JSON" | python3 -c 'import json,sys; d=sys.stdin.read().strip(); print(json.loads(d).get("Destination","") if d else "")' 2>/dev/null || true)"
+  TS_STATUS="$(printf '%s' "$TS_JSON" | python3 -c 'import json,sys; d=sys.stdin.read().strip(); print(json.loads(d).get("Status","") if d else "")' 2>/dev/null || true)"
+
+  if [ "$TS_DEST" = "CloudWatchLogs" ] && [ "$TS_STATUS" = "ACTIVE" ]; then
+    ok "CloudWatch Transaction Search enabled"
+  elif [ "$TS_DEST" = "CloudWatchLogs" ]; then
+    warn "Transaction Search is configured but not ACTIVE (status: ${TS_STATUS:-unknown})"
+    hint "    It usually settles within a minute. Re-run to confirm."
+  else
+    warn "CloudWatch Transaction Search is not enabled in $WANT_REGION"
+    hint "    Kit deploys and runs fine without it, and ./scripts/eval.sh still"
+    hint "    scores the agent - the deterministic gate reads the agent's"
+    hint "    replies directly. Only managed evaluators and 'agentcore run"
+    hint "    eval' need trace ingestion, and they will find no spans:"
+    printf '      %saws xray update-trace-segment-destination --destination CloudWatchLogs --region %s%s\n' \
+      "$B" "$WANT_REGION" "$X"
+  fi
+fi
+
 # ---------------------------------------------------------------- verdict
 
 printf '\n'
