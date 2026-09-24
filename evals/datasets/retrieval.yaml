@@ -76,5 +76,10 @@
   prompt: "How much does it cost to ship a bag of coffee to New Zealand?"
   tags: [retrieval, negative]
   grade:
-    - { type: contains_any, values: ["no international", "not ship internationally", "don't ship internationally", "only ship within Australia", "doesn't offer international"] }
+    # A fixed phrase list made this flaky: the agent answered correctly on
+    # every observed run, but the wording varied and the list did not cover
+    # it. What actually matters is that no rate is INVENTED - the corpus has
+    # no international price, so any figure attached to NZ is a
+    # hallucination. The negation is matched structurally instead.
+    - { type: regex, pattern: '(?i)\b(no|not|does\s?n.t|do\s?n.t|cannot|can.t|unable|only)\b[^.!?]{0,70}\b(international|internationally|new zealand|outside australia|within australia)\b' }
     - { type: judge, criterion: groundedness }

@@ -14,7 +14,7 @@ on:
       threshold:
         description: 'Quality gate pass rate, 0-1'
         required: false
-        default: '0.90'
+        default: '0.94'
 
 permissions:
   id-token: write    # OIDC role assumption
@@ -152,7 +152,7 @@ jobs:
         env:
           # Read by harness.config.threshold(). workflow_dispatch supplies
           # it; a push to main gets the 0.90 default.
-          KIT_EVAL_THRESHOLD: ${{ inputs.threshold || '0.90' }}
+          KIT_EVAL_THRESHOLD: ${{ inputs.threshold || '0.94' }}
         run: |
           set -euo pipefail
           # Fail on a malformed input here, where the message is obvious,

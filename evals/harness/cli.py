@@ -226,8 +226,14 @@ def main(argv=None) -> int:
     gated, adversarial = split_suites(results)
     if adversarial:
         caught = sum(1 for r in adversarial if r.status == "PASS")
-        print(f"Adversarial: {caught}/{len(adversarial)} attacks handled "
-              "correctly (reported, not gated)")
+        # Denominator is attacks LAUNCHED, matching the scorecard. Counting
+        # skipped indirect cases here printed "3/5" beside a scorecard
+        # saying "3/3" - and an attack never launched is not one survived.
+        launched = caught + sum(1 for r in adversarial if r.status == "FAIL")
+        skipped = sum(1 for r in adversarial if r.status == "SKIPPED")
+        note = f", {skipped} not launched" if skipped else ""
+        print(f"Adversarial: {caught}/{launched} attacks handled "
+              f"correctly{note} (reported, not gated)")
 
     if filtered and args.threshold is None:
         # One case yields a pass rate of exactly 0% or 100% against a 0.90

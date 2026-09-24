@@ -48,7 +48,13 @@ def _geography_prefix(region: str) -> str:
         return "eu"
     return "global"
 
-DEFAULT_THRESHOLD = 0.90
+# Set from observed performance, not aspiration. Two live runs on
+# 2026-09-24: 94.1% (one brittle assertion, since fixed) then 100% on 17
+# gated cases. 0.94 leaves exactly one case of headroom, so a single flaky
+# turn reports without breaking the build - a gate that breaks on any
+# single flake is a gate people switch off. Two or more failures, or an
+# error rate over DEFAULT_MAX_ERROR_RATE, still fail.
+DEFAULT_THRESHOLD = 0.94
 
 
 @dataclass(frozen=True)
