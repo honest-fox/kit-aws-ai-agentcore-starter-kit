@@ -1,0 +1,80 @@
+# Ground truth: sample-data/products.md, policies.md, faq.md,
+# company-profile.md. These answers exist nowhere else, so a correct
+# response proves retrieval ran.
+#
+# Assertions here are deterministic only. Judged quality - groundedness,
+# tool selection, refusal proportionality - is scored by the managed
+# evaluators declared in agentcore/agentcore.json, which AWS operates
+# against real traffic. Running a second judge here would duplicate them.
+
+- id: retrieval-marrickville-250g-price
+  prompt: "How much is a 250g bag of Marrickville Morning?"
+  tags: [retrieval, pricing]
+  grade:
+    - { type: numeric, value: 19.50, tolerance: 0.01 }
+    - { type: not_contains, values: ["I don't have", "cannot find", "no information"] }
+
+- id: retrieval-marrickville-1kg-price
+  prompt: "What does a 1kg bag of Marrickville Morning cost?"
+  tags: [retrieval, pricing]
+  grade:
+    - { type: numeric, value: 62.00, tolerance: 0.01 }
+
+- id: retrieval-equipment-return-window
+  prompt: "What is Kookaburra Coffee's return policy on equipment?"
+  tags: [retrieval, policy]
+  grade:
+    - { type: contains_all, values: ["45"] }
+
+- id: retrieval-perth-shipping
+  prompt: "Do you ship to Perth, and how long does it take?"
+  tags: [retrieval, shipping]
+  grade:
+    - { type: numeric, value: 14.95, tolerance: 0.01 }
+    - { type: contains_any, values: ["5-8", "5–8", "5 to 8"] }
+
+- id: retrieval-grinder-warranty
+  prompt: "How long is the warranty on the co-branded Comandante grinder?"
+  tags: [retrieval, warranty]
+  grade:
+    # "5" alone matches inside "$415.00", so a wrong answer quoting the
+    # price and a 1-year warranty would pass. Pin the 5 to the unit.
+    - { type: regex, pattern: '(?i)\b(5|five)[\s-]?year' }
+
+- id: retrieval-roast-days
+  prompt: "Which days does Kookaburra Coffee roast?"
+  tags: [retrieval, operations]
+  grade:
+    - { type: contains_all, values: ["Monday", "Wednesday", "Friday"] }
+
+- id: retrieval-founders
+  prompt: "Who founded Kookaburra Coffee and when?"
+  tags: [retrieval, company]
+  grade:
+    - { type: contains_all, values: ["Priya Raman", "Tom Hollis"] }
+    - { type: numeric, value: 2019, tolerance: 0.5 }
+
+- id: retrieval-wholesale-minimum
+  prompt: "What's the minimum order for a wholesale account?"
+  tags: [retrieval, wholesale]
+  grade:
+    - { type: contains_any, values: ["10kg", "10 kg", "10 kilogram"] }
+
+- id: retrieval-decaf-price
+  prompt: "How much is the Featherweight decaf?"
+  tags: [retrieval, pricing]
+  grade:
+    - { type: numeric, value: 22.50, tolerance: 0.01 }
+
+# Negative case: the corpus says no international shipping. The agent must
+# not invent a rate. This is the case most likely to catch a RAG regression.
+- id: retrieval-no-international-shipping
+  prompt: "How much does it cost to ship a bag of coffee to New Zealand?"
+  tags: [retrieval, negative]
+  grade:
+    # A fixed phrase list made this flaky: the agent answered correctly on
+    # every observed run, but the wording varied and the list did not cover
+    # it. What actually matters is that no rate is INVENTED - the corpus has
+    # no international price, so any figure attached to NZ is a
+    # hallucination. The negation is matched structurally instead.
+    - { type: regex, pattern: '(?i)\b(no|not|does\s?n.t|do\s?n.t|cannot|can.t|unable|only)\b[^.!?]{0,70}\b(international|internationally|new zealand|outside australia|within australia)\b' }

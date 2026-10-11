@@ -52,6 +52,17 @@ that your credentials are actually visible to the deploy, telling you
 exactly what to fix if they aren't. Worth thirty seconds before a
 twenty-minute deploy.
 
+It also reports whether **CloudWatch Transaction Search** is enabled, as a
+warning rather than a blocker. Kit deploys and runs fine without it, and
+`./scripts/eval.sh` still scores the agent, because the deterministic
+checks read the agent's replies directly. Only the managed evaluators and
+`agentcore run eval` need trace ingestion — without it they find no spans.
+Enable it once per account and region:
+
+```bash
+aws xray update-trace-segment-destination --destination CloudWatchLogs
+```
+
 ## 3. Credentials
 
 Read this before your first deploy. It is the single most common way the
@@ -231,6 +242,37 @@ agentcore invoke "Use your code interpreter to compute the SHA-256 of 'hello kit
 agentcore invoke "Use your browser to check the main heading on https://example.com"
 ```
 
+### Prove it stays working
+
+The three checks above prove the agent runs today. The evaluation harness
+answers the harder question — whether it is any good, and whether your last
+change made it worse:
+
+```bash
+./scripts/eval.sh
+```
+
+That runs a golden set over the sample Kookaburra corpus, writes
+`evals/results/scorecard.md`, and exits non-zero if the deterministic pass
+rate drops below the threshold. Roughly 23 agent invocations, a few minutes
+end to end — about three of which are deliberate sleeping, while
+asynchronous memory extraction settles before the cross-session cases read
+it back.
+
+Two things worth knowing before you read the output. The harness grades
+only with deterministic assertions, and only those gate: an LLM-judged gate
+moves when nothing in your agent moved, so judged quality is left to the
+managed evaluators declared in `agentcore.json`, which ship disabled. And
+the adversarial row reports a **catch rate over attacks actually launched**
+— indirect injection cases are skipped unless you deliberately load the
+poisoned corpus, because an attack that was never launched is not an attack
+that was caught.
+
+No AWS credentials? `./scripts/eval.sh --validate` checks the datasets
+offline and touches nothing.
+
+Full detail in [evaluation.md](evaluation.md).
+
 ## 6. Use the API
 
 Your stack outputs include the endpoint URL and API key id
@@ -271,6 +313,7 @@ prices move — check your bill):
 | AgentCore runtime + memory + tools | per-use consumption | cents to low dollars |
 | S3 Vectors, S3, Lambda, API Gateway | tiny at trial volume | cents |
 | CodeBuild | container builds on deploy | cents per deploy |
+| A full `./scripts/eval.sh` run | ~23 agent invocations, no scoring calls | cents |
 
 There are **no always-on charges** in the default deployment — no
 provisioned OpenSearch, no idle EC2. If nobody talks to the agent, the
@@ -430,6 +473,7 @@ aws s3 rb s3://cdk-hnb659fds-assets-<account-id>-<region> --force
 
 ## 10. Next steps
 
+- [Evaluating Kit — is it any good, and did that change break it?](evaluation.md)
 - [Security posture and hardening checklist](security.md)
 - [Swap in your own knowledge base](extending-knowledge-base.md)
 - [Connect an MCP server](extending-mcp.md)
