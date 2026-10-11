@@ -4,6 +4,28 @@ All notable changes to Kit are documented here. Kit follows
 [Semantic Versioning](https://semver.org/): while the version is `0.x`,
 the deployed resource shape may change between minor versions.
 
+## [0.2.1] — 2026-10-12
+
+Dependency security updates. No change to how the agent behaves.
+
+- **PyJWT 2.13.0 → 2.15.1** and **urllib3 2.7.0 → 2.8.0** in the agent
+  (`app/kit/uv.lock`), clearing every open advisory against the agent:
+  one critical, seven high and eight moderate.
+  Both arrive through `mcp`, `strands-agents` and the AWS SDK rather than
+  being used by Kit directly.
+- **aws-cdk-lib 2.261 → 2.273** in `agentcore/cdk/`, for its bundled
+  `brace-expansion`. One side effect on deploy: CDK's own
+  `BucketDeployment` handler, which uploads `sample-data/`, now runs on
+  `arm64` with 1,024 MB. Kit's own functions are unchanged.
+- **Jest 29 → 30** in `agentcore/cdk/` (test tooling only, never
+  deployed).
+
+### Known limitations
+
+- `sprintf-js`, a moderate advisory reached only through Jest's coverage
+  tooling, has no fixed release on npm. It is a dev dependency and never
+  ships.
+
 ## [0.2.0] — 2026-10-12
 
 An evaluation harness. Kit 0.1 let you deploy an agent and see it work;
@@ -202,5 +224,6 @@ documented.
 - API defaults (2,000 requests/day, 20,000-character prompts) are sized
   for evaluation, not production.
 
+[0.2.1]: https://github.com/honest-fox/kit-aws-ai-agentcore-starter-kit/releases/tag/v0.2.1
 [0.2.0]: https://github.com/honest-fox/kit-aws-ai-agentcore-starter-kit/releases/tag/v0.2.0
 [0.1.0]: https://github.com/honest-fox/kit-aws-ai-agentcore-starter-kit/releases/tag/v0.1.0
