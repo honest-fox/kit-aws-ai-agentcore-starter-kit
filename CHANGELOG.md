@@ -8,11 +8,13 @@ the deployed resource shape may change between minor versions.
 
 Dependency security updates. No change to how the agent behaves.
 
-- **PyJWT 2.13.0 → 2.15.1** and **urllib3 2.7.0 → 2.8.0** in the agent
-  (`app/kit/uv.lock`), clearing every open advisory against the agent:
-  one critical, seven high and eight moderate.
-  Both arrive through `mcp`, `strands-agents` and the AWS SDK rather than
-  being used by Kit directly.
+- **PyJWT 2.13.0 → 2.15.1**, **urllib3 2.7.0 → 2.8.0** and
+  **multidict 6.7.1 → 6.9.1** in the agent (`app/kit/uv.lock`), clearing
+  every open advisory against the agent, including one critical. All
+  three arrive through `mcp`, `strands-agents` and the AWS SDK rather
+  than being used by Kit directly.
+- **handlebars 4.7.9 → 4.7.10** in `agentcore/cdk/` (two critical
+  advisories; build-time tooling, not deployed).
 - **aws-cdk-lib 2.261 → 2.273** in `agentcore/cdk/`, for its bundled
   `brace-expansion`. One side effect on deploy: CDK's own
   `BucketDeployment` handler, which uploads `sample-data/`, now runs on
