@@ -6,27 +6,27 @@ the deployed resource shape may change between minor versions.
 
 ## [0.2.1] — 2026-10-12
 
-Dependency security updates. No change to how the agent behaves.
+Dependency security updates. No change to how the agent behaves, and
+nothing new to deploy beyond the updated container image.
 
 - **PyJWT 2.13.0 → 2.15.1**, **urllib3 2.7.0 → 2.8.0** and
   **multidict 6.7.1 → 6.9.1** in the agent (`app/kit/uv.lock`), clearing
   every open advisory against the agent, including one critical. All
   three arrive through `mcp`, `strands-agents` and the AWS SDK rather
   than being used by Kit directly.
-- **handlebars 4.7.9 → 4.7.10** in `agentcore/cdk/` (two critical
-  advisories; build-time tooling, not deployed).
-- **aws-cdk-lib 2.261 → 2.273** in `agentcore/cdk/`, for its bundled
-  `brace-expansion`. One side effect on deploy: CDK's own
-  `BucketDeployment` handler, which uploads `sample-data/`, now runs on
-  `arm64` with 1,024 MB. Kit's own functions are unchanged.
-- **Jest 29 → 30** in `agentcore/cdk/` (test tooling only, never
-  deployed).
+- **handlebars 4.7.9 → 4.7.10** in `agentcore/cdk/`, clearing two
+  critical advisories. A lockfile-only change inside the ranges the
+  AgentCore CLI manages; build-time tooling, not deployed.
+- `docs/security.md` now lists the advisories that remain and why.
 
 ### Known limitations
 
-- `sprintf-js`, a moderate advisory reached only through Jest's coverage
-  tooling, has no fixed release on npm. It is a dev dependency and never
-  ships.
+- **Three advisories remain in `agentcore/cdk/` build and test tooling**
+  (`brace-expansion`, `braces`, `sprintf-js`). Fixing the first two needs
+  a newer `aws-cdk-lib` and Jest 30, and the AgentCore CLI refuses to
+  deploy a project declaring either — checked against CLI 0.28.1 and the
+  latest, 0.31.1. None reaches a deployed resource.
+  `docs/security.md` has the detail.
 
 ## [0.2.0] — 2026-10-12
 

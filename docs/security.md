@@ -179,6 +179,34 @@ an empty string on the runtime.
 - The API key value is never in the stack outputs, only its id; fetch the
   value with `aws apigateway get-api-key --include-value`.
 
+## Dependency advisories we have not cleared
+
+Everything that ships in the agent's container image is kept clear of
+open advisories. Three remain in `agentcore/cdk/`, all in build and test
+tooling that runs on your machine during `agentcore deploy` or `npm test`
+and never reaches a deployed resource:
+
+| Package | Severity | Reached through | Why it stays |
+|---|---|---|---|
+| `brace-expansion` 5.0.6 | high | bundled inside `aws-cdk-lib` | Fixed in newer `aws-cdk-lib`, which the AgentCore CLI refuses to deploy |
+| `braces` | high | Jest 29 | No fixed release; Jest 30 drops it, and the CLI refuses Jest 30 too |
+| `sprintf-js` | moderate | Jest's coverage tooling | No fixed release |
+
+The AgentCore CLI manages the versions declared in
+`agentcore/cdk/package.json`. If one is newer than the CLI was tested
+with, `agentcore deploy` stops with *"This project requires a newer
+version of the AgentCore CLI"*. That holds for CLI 0.28.1 and 0.31.1
+alike, both of which expect `aws-cdk-lib ~2.261` and `jest ~29.7`.
+Shipping the fix would break the first deploy for every user, so Kit
+keeps the CLI's versions and takes in-range fixes only.
+
+Each of the three is a denial of service through crafted glob or format
+strings, over inputs that come from this repository rather than from a
+user. They clear when the CLI moves its pins. That is a judgement call,
+not a fix. If your policy says otherwise,
+`agentcore config disableDependencyManagement true` lets you own those
+versions yourself.
+
 ## Reporting a vulnerability
 
 Open a GitHub issue for non-sensitive findings. For anything you would
