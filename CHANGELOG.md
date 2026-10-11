@@ -4,7 +4,7 @@ All notable changes to Kit are documented here. Kit follows
 [Semantic Versioning](https://semver.org/): while the version is `0.x`,
 the deployed resource shape may change between minor versions.
 
-## [0.2.0] — 2026-09-XX
+## [0.2.0] — 2026-10-12
 
 An evaluation harness. Kit 0.1 let you deploy an agent and see it work;
 0.2 answers the next question — whether it is any good, and whether you
