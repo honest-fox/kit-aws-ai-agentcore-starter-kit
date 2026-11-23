@@ -119,8 +119,11 @@ stale block, or use `AWS_PROFILE`, which sidesteps it.
 ## 4. Deploy
 
 ```bash
-# 1. Install the AgentCore CLI
-npm install -g @aws/agentcore
+# 1. Install the AgentCore CLI — pin to v0. Kit is a v0 project; the v1 CLI
+#    (currently npm's `latest`) deploys it in "compatibility mode" and fails
+#    at the deploy step with `NoStack`. The `v0-latest` dist-tag tracks the
+#    newest v0 release.
+npm install -g @aws/agentcore@v0-latest
 
 # 2. Get Kit
 git clone https://github.com/honest-fox/kit-aws-ai-agentcore-starter-kit kit
@@ -410,6 +413,18 @@ aws s3 rb s3://cdk-hnb659fds-assets-<account-id>-<region> --force
 
 ## 9. Troubleshooting
 
+- **`CDK deploy failed: ... NoStack: CloudFormationStack object does not
+  hold a stack`, after a `v0 project ... running in v1 compatibility mode`
+  notice** — you installed the v1 CLI (npm's `latest`) against this v0
+  project. Install the v0 CLI instead and redeploy:
+  `npm install -g @aws/agentcore@v0-latest`. A failed attempt can leave the
+  stack in `ROLLBACK_COMPLETE`, which blocks redeploys; delete it first with
+  `aws cloudformation delete-stack --stack-name AgentCore-kit-default`.
+- **Deploy rolls back on `AWS::BedrockAgentCore::Evaluator` with `Bedrock
+  model '...claude-sonnet-4-5...' is not available`** — the evaluator's
+  judge model went Legacy. `agentcore.json` now pins
+  `au.anthropic.claude-sonnet-4-6` (note: Sonnet 5/5.5 deprecate
+  `temperature`, which the evaluator service sends, so they fail validation).
 - **`AWS credentials are invalid` / `InvalidClientTokenId`, even after a
   fresh SSO login** — the CLI has no `--profile` flag, so an SSO login on
   a named profile is invisible to it. Run `./scripts/preflight.sh`, which
